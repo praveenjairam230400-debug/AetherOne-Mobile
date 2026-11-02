@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Extract Android source project
-        run: unzip -q AetherOne-Mobile-Android-Source-v0.2.0.zip
+        run: unzip -q AetherOne-Mobile-Android-Source-v0.3.0.zip
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -20,10 +20,10 @@ jobs:
       - name: Install Android SDK
         run: |
           sdk_manager=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)
-          "$sdk_manager" --install "platforms;android-35" "build-tools;35.0.0"
+          "$sdk_manager" --install "platforms;android-36" "build-tools;36.0.0"
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: '8.11.1'
       - name: Compile APK and run Android lint
         working-directory: AetherOneMobile
         run: gradle :app:assembleDebug :app:lintDebug --no-daemon --stacktrace
@@ -31,6 +31,6 @@ jobs:
         run: test -s AetherOneMobile/app/build/outputs/apk/debug/app-debug.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: AetherOne-v0.2.0-debug-apk
+          name: AetherOne-v0.3.0-debug-apk
           path: AetherOneMobile/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
