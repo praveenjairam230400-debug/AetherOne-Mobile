@@ -1,0 +1,51 @@
+name: Build Aether One PC
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - AetherOne-PC-Source.zip
+      - .github/workflows/build-pc.yml
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Extract PC source
+        run: Expand-Archive AetherOne-PC-Source.zip -DestinationPath source
+      - name: Test address and ad rules
+        run: dotnet run --project source/AetherOnePC/PolicyTests/PolicyTests.csproj -c Release
+      - name: Publish Windows x64 application
+        run: dotnet publish source/AetherOnePC/AetherOnePC/AetherOnePC.csproj -c Release -r win-x64 --self-contained true -o publish
+      - name: Run actual browser smoke checks
+        shell: pwsh
+        run: |
+          $env:AETHER_SMOKE_OUTPUT = "$env:GITHUB_WORKSPACE\smoke-results"
+          $process = Start-Process "$env:GITHUB_WORKSPACE\publish\AetherOne.exe" -ArgumentList '--smoke-test' -PassThru
+          if (-not $process.WaitForExit(120000)) { $process.Kill(); throw 'Smoke test timed out' }
+          Get-Content "$env:AETHER_SMOKE_OUTPUT\smoke-test.txt"
+          if ($process.ExitCode -ne 0) { throw "Smoke test failed: $($process.ExitCode)" }
+          if (-not (Test-Path "$env:AETHER_SMOKE_OUTPUT\AetherOne-Engine.png")) { throw 'Engine screenshot missing' }
+      - name: Package portable application
+        shell: pwsh
+        run: |
+          Copy-Item source/AetherOnePC/README.md publish/README.txt
+          Compress-Archive -Path publish/* -DestinationPath AetherOne-PC-Windows-x64.zip
+          Get-FileHash AetherOne-PC-Windows-x64.zip -Algorithm SHA256 | Format-List
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AetherOne-PC-Windows-x64
+          path: AetherOne-PC-Windows-x64.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AetherOne-PC-Validation
+          path: smoke-results
+          if-no-files-found: warn
