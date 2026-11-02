@@ -32,6 +32,20 @@ jobs:
           Get-Content "$env:AETHER_SMOKE_OUTPUT\smoke-test.txt"
           if ($process.ExitCode -ne 0) { throw "Smoke test failed: $($process.ExitCode)" }
           if (-not (Test-Path "$env:AETHER_SMOKE_OUTPUT\AetherOne-Engine.png")) { throw 'Engine screenshot missing' }
+      - name: Publish previous shell for same-runner comparison
+        run: dotnet publish source/AetherOnePC/Baseline/AetherOnePC.csproj -c Release -r win-x64 --self-contained true -o baseline-publish
+      - name: Compare native dashboard startup and root-process idle footprint
+        shell: pwsh
+        run: |
+          $env:AETHER_BENCHMARK = '1'
+          foreach ($variant in @('baseline-publish', 'publish')) {
+            $env:AETHER_SMOKE_OUTPUT = "$env:GITHUB_WORKSPACE\smoke-results\$variant"
+            $process = Start-Process "$env:GITHUB_WORKSPACE\$variant\AetherOne.exe" -ArgumentList '--smoke-test' -PassThru
+            if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'Benchmark timed out' }
+            if ($process.ExitCode -ne 0) { throw 'Benchmark failed' }
+            Get-Content "$env:AETHER_SMOKE_OUTPUT\performance.json"
+          }
+          Remove-Item Env:AETHER_BENCHMARK
       - name: Package portable application
         shell: pwsh
         run: |
