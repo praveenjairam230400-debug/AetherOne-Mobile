@@ -1,0 +1,41 @@
+name: Aether engine component validation
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - AetherOne-Engine-Experiment.zip
+      - .github/workflows/build-engine.yml
+permissions:
+  contents: read
+jobs:
+  component:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Extract engine experiment
+        shell: python
+        run: |
+          import zipfile
+          with zipfile.ZipFile('AetherOne-Engine-Experiment.zip') as z:
+              z.extractall('engine-source')
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - name: Compile controller and validate pinned source patch
+        run: python engine-source/aether-engine/tools/validate.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Aether-engine-component-${{ runner.os }}
+          path: engine-source/aether-engine/results
+          if-no-files-found: error
