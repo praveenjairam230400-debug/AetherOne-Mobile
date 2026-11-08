@@ -1,0 +1,38 @@
+name: Aether standalone Windows smoke
+on:
+  push:
+    branches: [aether-standalone-windows]
+    paths: [.github/workflows/aether-standalone-smoke.yml]
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - name: Compile launcher and verify official engine
+        shell: pwsh
+        run: |
+          [IO.File]::WriteAllBytes('source.zip', [Convert]::FromBase64String('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'))
+          Expand-Archive source.zip source
+          Set-Location source
+          go test ./src
+          if ($LASTEXITCODE -ne 0) { throw 'Launcher tests failed' }
+          New-Item -ItemType Directory package | Out-Null
+          $env:CGO_ENABLED = '0'
+          go build -buildvcs=false -trimpath -ldflags '-s -w -H windowsgui' -o package/AetherOne.exe ./src
+          if ($LASTEXITCODE -ne 0) { throw 'Launcher compilation failed' }
+          Get-FileHash package/AetherOne.exe
+          Invoke-WebRequest 'https://github.com/brave/brave-browser/releases/download/v1.99.55/brave-v1.99.55-win32-x64.zip' -OutFile engine.zip
+          if ((Get-FileHash engine.zip).Hash -ne 'ababc163488bfd58cab7ebe4a4057dd23227c81f5958f3a8597526a278fbae15') { throw 'Engine archive digest mismatch' }
+          Expand-Archive engine.zip package/Engine
+          ./tools/Smoke-Windows.ps1 -Package package | Tee-Object -FilePath smoke.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aether-standalone-windows-smoke
+          path: source/smoke.json
