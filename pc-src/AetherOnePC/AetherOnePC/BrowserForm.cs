@@ -93,10 +93,10 @@ public sealed partial class BrowserForm : Form
             if (smoke) { await SmokeTest(); return; }
             var workspaceAtStart = state.ActiveWorkspace;
             if (state.RestoreTabs && state.Sessions.Count > 0) {
-                foreach (var entry in state.Sessions.Where(x => IsWeb(x.Url)).Take(24).ToArray()) {
+                foreach (var entry in state.Sessions.Where(x => IsWeb(x.Url)).ToArray()) {
                     NewTab(entry.Url, false, entry.Workspace); pages[^1].Pinned = entry.Pinned; if(!string.IsNullOrWhiteSpace(entry.Title)) pages[^1].Title = entry.Title;
                 }
-            } else if(state.RestoreTabs) foreach (var url in state.Tabs.Where(IsWeb).Take(12).ToArray()) NewTab(url, false);
+            } else if(state.RestoreTabs) foreach (var url in state.Tabs.Where(IsWeb).ToArray()) NewTab(url, false);
             state.ActiveWorkspace = workspaceAtStart; NewTab();
             try { await environment; var warm = Current; if (!closing && warm != null) await Ensure(warm); if (!closing) status.Text = "Engine ready · Ctrl+L to search · Shield controls ad blocking"; }
             catch (Exception e) { EngineError(e); }
@@ -112,7 +112,7 @@ public sealed partial class BrowserForm : Form
     private void NewTab(string? url = null, bool select = true, string? workspace = null)
     {
         suggestions?.Hide();
-        if (pages.Count >= 24) { status.Text = "24 tab limit · close a tab first"; return; }
+        
         var p = new BrowserTab { Workspace = workspace ?? state.ActiveWorkspace };
         p.Container = new Panel { BackColor = bg, Tag = p };
         p.Home = CreateDashboard(p);
@@ -121,6 +121,29 @@ public sealed partial class BrowserForm : Form
         if (url != null) { p.Favicon=LoadCachedFavicon(url); p.Url = url; p.Title = Policy.Host(url); p.Container.Text = p.Title; p.AtHome = false; if (select) _ = Navigate(url, p); }
 
         Sync(); QueueSave();if(select&&url==null){address.Text="";address.Focus();}
+    }
+    private void ReorderTab(BrowserTab moving,BrowserTab target)
+    {
+        if(moving==target||moving.Pinned!=target.Pinned||!pages.Contains(moving)||!pages.Contains(target))return;
+        pages.Remove(moving);int index=pages.IndexOf(target);pages.Insert(Math.Max(0,index),moving);
+        horizontalTabs?.Invalidate();QueueSave();
+    }
+    private void OpenUrlInWindow(string url)
+    {
+        if(!IsWeb(url))return;
+        var info=new ProcessStartInfo(Environment.ProcessPath!){UseShellExecute=true};
+        info.ArgumentList.Add("--profile");info.ArgumentList.Add(activeProfileId);
+        info.ArgumentList.Add("--open-url");info.ArgumentList.Add(url);
+        try{Process.Start(info);}catch(Exception ex){MessageBox.Show(this,ex.Message,"Could not open window");}
+    }
+    private void DetachTab(BrowserTab p)
+    {
+        if(!pages.Contains(p))return;
+        if(!IsWeb(p.Url)){status.Text="Only website tabs can be detached";return;}
+        var info=new ProcessStartInfo(Environment.ProcessPath!){UseShellExecute=true};
+        info.ArgumentList.Add("--profile");info.ArgumentList.Add(activeProfileId);
+        info.ArgumentList.Add("--open-url");info.ArgumentList.Add(p.Url);
+        try{if(Process.Start(info)!=null)CloseTab(p);}catch(Exception ex){MessageBox.Show(this,ex.Message,"Could not detach tab");}
     }
     private async Task Ensure(BrowserTab p)
     {
@@ -185,6 +208,23 @@ public sealed partial class BrowserForm : Form
                 if (!e.IsSuccess) p.LastError = e.WebErrorStatus.ToString();
                 if (e.IsSuccess && IsWeb(p.Url)) { state.History.RemoveAll(x => x.Url == p.Url); state.History.Insert(0, new SavedLink { Url = p.Url, Title = p.Title }); state.History = state.History.Take(300).ToList(); }
                 QueueSave(); Sync();if(p!=Current)_=TrimHidden(p);
+            };
+            core.Settings.AreDefaultContextMenusEnabled = false;
+            core.ContextMenuRequested += (_, e) =>
+            {
+                var target=e.ContextMenuTarget;
+                var link=target?.LinkUri;
+                if(string.IsNullOrWhiteSpace(link)||!IsWeb(link))return;
+                e.Handled=true;
+                BeginInvoke((Action)(()=>{
+                    if(closing)return;
+                    var menu=BrowserContextMenu();
+                    menu.Items.Add("Open link in new tab",null,(_,_)=>NewTab(link));
+                    menu.Items.Add("Open link in new window",null,(_,_)=>OpenUrlInWindow(link));
+                    menu.Items.Add(new ToolStripSeparator());
+                    menu.Items.Add("Copy link address",null,(_,_)=>Clipboard.SetText(link));
+                    menu.Show(Cursor.Position);
+                }));
             };
             core.NewWindowRequested += (_, e) => { e.Handled = true; if (e.IsUserInitiated && IsWeb(e.Uri)){bool fromExtension=e.OriginalSourceFrameInfo?.Source?.StartsWith("chrome-extension://",StringComparison.OrdinalIgnoreCase)==true;NewTab(e.Uri,!fromExtension);} else status.Text = "Automatic popup blocked"; };
             core.PermissionRequested += (_, e) =>
