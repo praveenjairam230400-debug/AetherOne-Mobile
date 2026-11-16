@@ -7,7 +7,7 @@ namespace AetherOnePC;
 internal sealed class PageWebView:WebView2 {internal void SynchronizeVisibility()=>base.OnVisibleChanged(EventArgs.Empty);}
 public sealed partial class BrowserForm
 {
-    private readonly System.Windows.Forms.Timer memoryTimer=new(){Interval=15000};
+    private readonly System.Windows.Forms.Timer memoryTimer=new(){Interval=10000};
     private bool reclaiming;
     private long memoryBudget=512*ResourcePolicy.MiB;
     private string memoryDecision="Waiting for first memory sample";
@@ -60,7 +60,7 @@ public sealed partial class BrowserForm
             var candidates=pages.Where(EligibleForRelease).Where(p=>ResourcePolicy.Eligible(now-p.LastActive,pressure)).OrderByDescending(p=>ResourcePolicy.DiscardPriority(now-p.LastActive,p.ReloadCostMs,p.Visits)).ToArray();
             int released=0;
             foreach(var p in candidates){
-                bool veryOld=now-p.LastActive>TimeSpan.FromMinutes(10)&&pages.Count(x=>x.Web!=null)>3;
+                bool veryOld=now-p.LastActive>TimeSpan.FromMinutes(3)&&pages.Count(x=>x.Web!=null)>2;
                 if(!(over&&usage>memoryBudget*9/10)&&!veryOld)continue;
                 p.MemoryReason="Checking unsaved work";bool protect=await HasUnsavedInput(p);
                 if(!EligibleForRelease(p))continue;
@@ -68,10 +68,10 @@ public sealed partial class BrowserForm
                 // Input and active state are checked again after checkpoint capture.
                 if(!await SaveCheckpoint(p)||!EligibleForRelease(p))continue;
                 if(await HasUnsavedInput(p)){p.MemoryReason="Retained: input changed";_=SuspendHiddenAsync(p);continue;}
-                if(!EligibleForRelease(p)||DateTime.UtcNow-p.LastActive<TimeSpan.FromSeconds(pressure?20:120))continue;
+                if(!EligibleForRelease(p)||DateTime.UtcNow-p.LastActive<TimeSpan.FromSeconds(pressure?15:45))continue;
                 p.MemoryCheckpointPending=true;ReleaseView(p);p.MemoryReason="Unloaded for memory; reloads on selection";released++;usage=KnownPrivateBytes();
             }
-            memoryDecision=$"Soft budget {memoryBudget/ResourcePolicy.MiB} MiB · {(pressure?"Windows memory pressure":"normal pressure")} · {released} views released";
+            memoryDecision=$"Known engine processes {environment?.IsCompletedSuccessfully==true?environment.Result.GetProcessInfos().Count:0} · Soft budget {memoryBudget/ResourcePolicy.MiB} MiB · {(pressure?"Windows memory pressure":"normal pressure")} · {released} views released";
             RefreshSurfaces();
         }catch(Exception) when(!measurement){memoryDecision="Memory check deferred; page state changed";}finally{reclaiming=false;}
     }
