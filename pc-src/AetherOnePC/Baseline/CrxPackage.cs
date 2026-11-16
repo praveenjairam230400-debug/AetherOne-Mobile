@@ -1,0 +1,33 @@
+using System.Buffers.Binary;
+using System.Security.Cryptography;
+using System.IO.Compression;
+using System.Text;
+using System.Text.Json.Nodes;
+namespace AetherOnePC;
+internal static class CrxPackage
+{
+    internal const long MaxUnpackedBytes=512L*1024*1024;
+    internal sealed record Verified(string Id,byte[] Key,byte[] Archive);
+    internal static bool ValidId(string id)=>id.Length==32&&id.All(c=>c is >= 'a' and <= 'p');
+    internal static string IdForKey(byte[] key)=>string.Concat(SHA256.HashData(key).Take(16).SelectMany(b=>new[]{(char)('a'+(b>>4)),(char)('a'+(b&15))}));
+    internal static string? StoreId(string value){if(ValidId(value))return value;if(!Uri.TryCreate(value,UriKind.Absolute,out var u)||u.Scheme!="https"||u.Host!="chromewebstore.google.com")return null;var parts=u.AbsolutePath.Split('/',StringSplitOptions.RemoveEmptyEntries);return parts.Length>=2&&parts[0]=="detail"&&ValidId(parts[^1])?parts[^1]:null;}
+    private static List<(int Tag,byte[] Value)> Fields(byte[] bytes)
+    {
+        int p=0,count=0;var result=new List<(int,byte[])>();ulong Var(){ulong value=0;for(int i=0;i<10;i++){if(p>=bytes.Length)throw new InvalidDataException("Truncated CRX header");byte b=bytes[p++];if(i==9&&b>1)throw new InvalidDataException("CRX integer overflow");value|=(ulong)(b&127)<<(i*7);if((b&128)==0)return value;}throw new InvalidDataException("Invalid CRX integer");}
+        while(p<bytes.Length){if(++count>10000)throw new InvalidDataException("CRX header too complex");ulong tag=Var();int wire=(int)(tag&7);int field=checked((int)(tag>>3));if(field==0)throw new InvalidDataException("Invalid CRX field");if(wire==2){ulong len=Var();if(len>(ulong)(bytes.Length-p))throw new InvalidDataException("Invalid CRX header length");result.Add((field,bytes.AsSpan(p,(int)len).ToArray()));p+=(int)len;}else if(wire==0)Var();else if(wire is 1 or 5){int n=wire==1?8:4;if(p>bytes.Length-n)throw new InvalidDataException("Truncated CRX field");p+=n;}else throw new InvalidDataException("Unsupported CRX wire type");}return result;
+    }
+    internal static Verified Verify(byte[] file,string? expectedId=null)
+    {
+        if(file.Length<20||file.Length>100*1024*1024||!file.AsSpan(0,4).SequenceEqual("Cr24"u8)||BinaryPrimitives.ReadUInt32LittleEndian(file.AsSpan(4))!=3)throw new InvalidDataException("A signed CRX3 package is required.");
+        uint size=BinaryPrimitives.ReadUInt32LittleEndian(file.AsSpan(8));if(size>1024*1024||size>file.Length-16)throw new InvalidDataException("Invalid CRX header size");int start=12+(int)size;var fields=Fields(file.AsSpan(12,(int)size).ToArray());var signed=fields.Where(f=>f.Tag==10000).ToArray();if(signed.Length!=1)throw new InvalidDataException("Missing CRX signed data");var ids=Fields(signed[0].Value).Where(f=>f.Tag==1).ToArray();if(ids.Length!=1||ids[0].Value.Length!=16)throw new InvalidDataException("Invalid CRX identity");string id=string.Concat(ids[0].Value.SelectMany(b=>new[]{(char)('a'+(b>>4)),(char)('a'+(b&15))}));if(expectedId!=null&&id!=expectedId)throw new InvalidDataException("Downloaded extension identity does not match the store listing.");
+        using var hash=IncrementalHash.CreateHash(HashAlgorithmName.SHA256);hash.AppendData(Encoding.ASCII.GetBytes("CRX3 SignedData\0"));var length=new byte[4];BinaryPrimitives.WriteInt32LittleEndian(length,signed[0].Value.Length);hash.AppendData(length);hash.AppendData(signed[0].Value);hash.AppendData(file.AsSpan(start));var digest=hash.GetHashAndReset();byte[]? key=null;
+        foreach(var proof in fields.Where(f=>f.Tag is 2 or 3)){var values=Fields(proof.Value);var keys=values.Where(f=>f.Tag==1).ToArray();var sigs=values.Where(f=>f.Tag==2).ToArray();if(keys.Length!=1||sigs.Length!=1||IdForKey(keys[0].Value)!=id)continue;bool valid=false;try{if(proof.Tag==2){using var rsa=RSA.Create();rsa.ImportSubjectPublicKeyInfo(keys[0].Value,out int read);valid=read==keys[0].Value.Length&&rsa.VerifyHash(digest,sigs[0].Value,HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1);}else{using var ec=ECDsa.Create();ec.ImportSubjectPublicKeyInfo(keys[0].Value,out int read);valid=read==keys[0].Value.Length&&ec.VerifyHash(digest,sigs[0].Value,DSASignatureFormat.Rfc3279DerSequence);}}catch(CryptographicException){}if(valid){key=keys[0].Value;break;}}
+        if(key==null)throw new InvalidDataException("Extension signature verification failed.");var archive=file.AsSpan(start).ToArray();if(archive.Length<4||!archive.AsSpan(0,4).SequenceEqual(new byte[]{80,75,3,4}))throw new InvalidDataException("CRX does not contain a ZIP archive");return new Verified(id,key,archive);
+    }
+    internal static void Extract(Verified package,string target)
+    {
+        Directory.CreateDirectory(target);string root=Path.GetFullPath(target)+Path.DirectorySeparatorChar;using var zip=new ZipArchive(new MemoryStream(package.Archive),ZipArchiveMode.Read);if(zip.Entries.Count>20000)throw new InvalidDataException("Extension has too many files");long total=0;var paths=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach(var item in zip.Entries){string relative=item.FullName.Replace('\\','/');if(relative.Split('/').Length>25||relative.Contains(':')||relative.StartsWith('/')||((item.ExternalAttributes>>16)&0xF000)==0xA000)throw new InvalidDataException("Unsafe extension archive entry");if(relative.Split('/')[0]=="_metadata")continue;string path=Path.GetFullPath(Path.Combine(target,relative.Replace('/',Path.DirectorySeparatorChar)));if(!path.StartsWith(root,StringComparison.OrdinalIgnoreCase)||!paths.Add(path))throw new InvalidDataException("Unsafe or duplicate extension path");if(relative.EndsWith('/')){Directory.CreateDirectory(path);continue;}total+=item.Length;if(total>MaxUnpackedBytes||item.Length<0)throw new InvalidDataException("Extension unpacked size exceeds 512 MiB");Directory.CreateDirectory(Path.GetDirectoryName(path)!);using var input=item.Open();using var output=File.Create(path);long copied=0;var buffer=new byte[32768];int n;while((n=input.Read(buffer))>0){copied+=n;if(copied>item.Length)throw new InvalidDataException("Invalid ZIP entry size");output.Write(buffer,0,n);}if(copied!=item.Length)throw new InvalidDataException("Truncated ZIP entry");}
+        string manifest=Path.Combine(target,"manifest.json");if(!File.Exists(manifest)||new FileInfo(manifest).Length>1024*1024)throw new InvalidDataException("Extension manifest missing or too large");var json=JsonNode.Parse(File.ReadAllText(manifest))?.AsObject()??throw new InvalidDataException("Invalid manifest");json["key"]=Convert.ToBase64String(package.Key);File.WriteAllText(manifest,json.ToJsonString());
+    }
+}
