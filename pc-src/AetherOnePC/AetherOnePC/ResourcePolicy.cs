@@ -6,5 +6,14 @@ internal static class ResourcePolicy
     internal static bool Pressure(long available,long total)=>total>0&&(available<768*MiB||available<(total/8));
     internal static bool NeedsReclaim(long usage,long budget)=>usage>budget+budget/8;
     internal static double DiscardPriority(TimeSpan idle,long reloadMs,int visits)=>idle.TotalSeconds-Math.Min(reloadMs,30000)/1000.0*8-Math.Min(visits,20)*8;
-    internal static bool Eligible(TimeSpan idle,bool pressure)=>idle>=TimeSpan.FromSeconds(pressure?15:45);
+    internal static string Mode(string? requested)=>requested is "Performance" or "Memory saver" ? requested : "Adaptive";
+    internal static TimeSpan MinimumIdle(bool pressure,string? mode)=>
+        TimeSpan.FromSeconds(pressure?15:Mode(mode)=="Performance"?120:Mode(mode)=="Memory saver"?30:45);
+    internal static TimeSpan LongIdle(string? mode)=>
+        TimeSpan.FromMinutes(Mode(mode)=="Performance"?10:Mode(mode)=="Memory saver"?2:3);
+    internal static bool Eligible(TimeSpan idle,bool pressure)=>idle>=MinimumIdle(pressure,"Adaptive");
+    internal static bool CanReclaimNow(bool pressure,bool activeLoading,TimeSpan sinceActivation,double cpuFraction)=>
+        pressure||(!activeLoading&&sinceActivation>=TimeSpan.FromSeconds(3)&&cpuFraction<0.35);
+    internal static int MaxReleasesPerScan(bool pressure,string? mode)=>
+        pressure?3:Mode(mode)=="Memory saver"?2:1;
 }
