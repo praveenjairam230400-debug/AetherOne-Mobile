@@ -81,6 +81,7 @@ internal sealed class TabDeck : Panel
 {
     internal sealed class PageCollection(TabDeck owner):System.Collections.ObjectModel.Collection<Panel>
     {
+        internal void MovePage(Panel page,int index){int old=Items.IndexOf(page);if(old<0)return;Items.RemoveAt(old);Items.Insert(Math.Clamp(index,0,Items.Count),page);}
         protected override void InsertItem(int index,Panel item){base.InsertItem(index,item);item.Dock=DockStyle.Fill;item.Visible=false;owner.Controls.Add(item);if(owner.SelectedTab==null)owner.SelectedTab=item;}
         protected override void RemoveItem(int index){var item=this[index];bool active=owner.SelectedTab==item;Panel? next=active&&Count>1?this[index+1<Count?index+1:index-1]:null;if(active)owner.SelectedTab=next;owner.Controls.Remove(item);base.RemoveItem(index);}
     }
