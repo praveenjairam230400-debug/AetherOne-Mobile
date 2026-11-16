@@ -85,6 +85,7 @@ public sealed class BrowserState
     public bool ReadingToolsOffered { get; set; }
     public bool ShowFavorites { get; set; } = true;
     public bool MemorySaver { get; set; } = true;
+    public string OptimizationMode { get; set; } = "Adaptive";
     public List<string> Workspaces { get; set; } = ["Personal", "Work", "Research"];
     public string ActiveWorkspace { get; set; } = "Personal";
     public List<TabSnapshot> Sessions { get; set; } = [];
