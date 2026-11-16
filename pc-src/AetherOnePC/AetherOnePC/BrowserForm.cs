@@ -60,7 +60,7 @@ public sealed partial class BrowserForm : Form
         public long Finished;
         public string LastError = "";
     }
-    public BrowserForm(bool smokeTest = false,string profileId="default")
+    public BrowserForm(bool smokeTest = false,string profileId="default",string? initialUrl=null)
     {
         smoke = smokeTest;
         activeProfileId=profileId;
@@ -97,7 +97,7 @@ public sealed partial class BrowserForm : Form
                     NewTab(entry.Url, false, entry.Workspace); pages[^1].Pinned = entry.Pinned; if(!string.IsNullOrWhiteSpace(entry.Title)) pages[^1].Title = entry.Title;
                 }
             } else if(state.RestoreTabs) foreach (var url in state.Tabs.Where(IsWeb).ToArray()) NewTab(url, false);
-            state.ActiveWorkspace = workspaceAtStart; NewTab();
+            state.ActiveWorkspace = workspaceAtStart; NewTab(initialUrl);
             try { await environment; var warm = Current; if (!closing && warm != null) await Ensure(warm); if (!closing) status.Text = "Engine ready · Ctrl+L to search · Shield controls ad blocking"; }
             catch (Exception e) { EngineError(e); }
         };
@@ -209,7 +209,7 @@ public sealed partial class BrowserForm : Form
                 if (e.IsSuccess && IsWeb(p.Url)) { state.History.RemoveAll(x => x.Url == p.Url); state.History.Insert(0, new SavedLink { Url = p.Url, Title = p.Title }); state.History = state.History.Take(300).ToList(); }
                 QueueSave(); Sync();if(p!=Current)_=TrimHidden(p);
             };
-            core.Settings.AreDefaultContextMenusEnabled = false;
+            core.Settings.AreDefaultContextMenusEnabled = true;
             core.ContextMenuRequested += (_, e) =>
             {
                 var target=e.ContextMenuTarget;
