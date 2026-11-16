@@ -71,7 +71,7 @@ public sealed partial class BrowserForm
                 if(!EligibleForRelease(p)||DateTime.UtcNow-p.LastActive<TimeSpan.FromSeconds(pressure?15:45))continue;
                 p.MemoryCheckpointPending=true;ReleaseView(p);p.MemoryReason="Unloaded for memory; reloads on selection";released++;usage=KnownPrivateBytes();
             }
-            memoryDecision=$"Known engine processes {environment?.IsCompletedSuccessfully==true?environment.Result.GetProcessInfos().Count:0} · Soft budget {memoryBudget/ResourcePolicy.MiB} MiB · {(pressure?"Windows memory pressure":"normal pressure")} · {released} views released";
+            memoryDecision=$"Known engine processes {(environment?.IsCompletedSuccessfully==true ? environment.Result.GetProcessInfos().Count : 0)} · Soft budget {memoryBudget/ResourcePolicy.MiB} MiB · {(pressure?"Windows memory pressure":"normal pressure")} · {released} views released";
             RefreshSurfaces();
         }catch(Exception) when(!measurement){memoryDecision="Memory check deferred; page state changed";}finally{reclaiming=false;}
     }
