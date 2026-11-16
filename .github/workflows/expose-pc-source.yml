@@ -1,0 +1,40 @@
+name: Expose Aether PC source for maintenance
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/expose-pc-source.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  expose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Extract validated PC archive
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          source=Path('AetherOne-PC-Source.zip')
+          root=Path('pc-src')
+          with ZipFile(source) as z:
+              for m in z.infolist():
+                  rel=Path(m.filename)
+                  if rel.is_absolute() or '..' in rel.parts: raise ValueError(m.filename)
+                  if m.is_dir(): continue
+                  p=root/rel
+                  p.parent.mkdir(parents=True,exist_ok=True)
+                  p.write_bytes(z.read(m))
+          print("Extracted",sum(p.is_file() for p in root.rglob('*')),"files")
+          PY
+      - name: Commit extracted source for focused fixes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pc-src
+          if ! git diff --cached --quiet; then git commit -m "Expose existing Aether One PC source for maintenance"; git push; fi
