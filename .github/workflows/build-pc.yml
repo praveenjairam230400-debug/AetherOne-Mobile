@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - AetherOne-PC-Source.zip
+      - pc-src/**
       - .github/workflows/build-pc.yml
 permissions:
   contents: read
@@ -17,8 +18,10 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
-      - name: Extract PC source
-        run: Expand-Archive AetherOne-PC-Source.zip -DestinationPath source
+      - name: Select maintained PC source
+        shell: pwsh
+        run: |
+          if (Test-Path "pc-src/AetherOnePC/AetherOnePC/AetherOnePC.csproj") { Copy-Item pc-src/* source -Recurse -Force } else { Expand-Archive AetherOne-PC-Source.zip -DestinationPath source }
       - name: Test address and ad rules
         run: dotnet run --project source/AetherOnePC/PolicyTests/PolicyTests.csproj -c Release
       - name: Publish Windows x64 application
