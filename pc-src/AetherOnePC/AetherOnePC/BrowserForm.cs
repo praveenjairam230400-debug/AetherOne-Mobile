@@ -125,7 +125,7 @@ public sealed partial class BrowserForm : Form
     private void ReorderTab(BrowserTab moving,BrowserTab target)
     {
         if(moving==target||moving.Pinned!=target.Pinned||!pages.Contains(moving)||!pages.Contains(target))return;
-        pages.Remove(moving);int index=pages.IndexOf(target);pages.Insert(Math.Max(0,index),moving);
+        bool forward=pages.IndexOf(moving)<pages.IndexOf(target);pages.Remove(moving);int index=pages.IndexOf(target);pages.Insert(Math.Clamp(index+(forward?1:0),0,pages.Count),moving);
         horizontalTabs?.Invalidate();QueueSave();
     }
     private void OpenUrlInWindow(string url)
