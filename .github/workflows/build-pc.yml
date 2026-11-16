@@ -21,7 +21,7 @@ jobs:
       - name: Select maintained PC source
         shell: pwsh
         run: |
-          if (Test-Path "pc-src/AetherOnePC/AetherOnePC/AetherOnePC.csproj") { Copy-Item pc-src/* source -Recurse -Force } else { Expand-Archive AetherOne-PC-Source.zip -DestinationPath source }
+          if (Test-Path "pc-src/AetherOnePC/AetherOnePC/AetherOnePC.csproj") { New-Item -ItemType Directory -Path source -Force | Out-Null; Copy-Item pc-src/* source -Recurse -Force } else { Expand-Archive AetherOne-PC-Source.zip -DestinationPath source }
       - name: Test address and ad rules
         run: dotnet run --project source/AetherOnePC/PolicyTests/PolicyTests.csproj -c Release
       - name: Publish Windows x64 application
