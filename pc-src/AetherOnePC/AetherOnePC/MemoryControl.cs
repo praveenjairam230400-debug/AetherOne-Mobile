@@ -9,6 +9,27 @@ public sealed partial class BrowserForm
 {
     private readonly System.Windows.Forms.Timer memoryTimer=new(){Interval=10000};
     private bool reclaiming;
+    private DateTime lastActivation = DateTime.UtcNow;
+    private DateTime lastCpuSampleAt = DateTime.MinValue;
+    private TimeSpan lastCpuTotal;
+    private double browserCpuFraction;
+    private int optimizationScans, optimizationReleased;
+    private double SampleBrowserCpu()
+    {
+        TimeSpan total=TimeSpan.Zero;
+        var ids=new HashSet<int>{Environment.ProcessId};
+        try{if(environment?.IsCompletedSuccessfully==true)foreach(var item in environment.Result.GetProcessInfos())ids.Add(item.ProcessId);}catch{}
+        foreach(int id in ids)try{using var process=Process.GetProcessById(id);total+=process.TotalProcessorTime;}catch{}
+        var now=DateTime.UtcNow;
+        if(lastCpuSampleAt!=DateTime.MinValue)
+        {
+            double seconds=(now-lastCpuSampleAt).TotalSeconds;
+            if(seconds>0.25)
+                browserCpuFraction=Math.Clamp((total-lastCpuTotal).TotalSeconds/(seconds*Math.Max(1,Environment.ProcessorCount)),0,1);
+        }
+        lastCpuTotal=total;lastCpuSampleAt=now;
+        return browserCpuFraction;
+    }
     private long memoryBudget=512*ResourcePolicy.MiB;
     private string memoryDecision="Waiting for first memory sample";
     [StructLayout(LayoutKind.Sequential)]
@@ -47,32 +68,79 @@ public sealed partial class BrowserForm
     }
     private async Task ReclaimInactive(bool measurement=false)
     {
-        if(reclaiming||!state.MemorySaver||closing||DownloadActive)return;reclaiming=true;
-        try{
-            foreach(var p in pages.ToArray())if(p.Web!=null&&p.Initialization?.IsCompleted!=false&&(p.AtHome||p.InternalKey.Length>0)&&!(p==Current&&p.InternalKey=="extensions")&&!installingExtension)ReleaseView(p);
-            var system=new MemoryStatus();bool available=GlobalMemoryStatusEx(system);
+        if(reclaiming||!state.MemorySaver||closing||DownloadActive)return;
+        reclaiming=true;
+        try
+        {
+            optimizationScans++;
+            var mode=ResourcePolicy.Mode(state.OptimizationMode);
+            var system=new MemoryStatus();
+            bool available=GlobalMemoryStatusEx(system);
             bool pressure=available&&ResourcePolicy.Pressure((long)system.AvailablePhysical,(long)system.TotalPhysical);
-            memoryBudget=ResourcePolicy.Budget(available?(long)system.TotalPhysical:8L*1024*ResourcePolicy.MiB,pressure);
-            // The controlled benchmark injects a budget, not fake process measurements.
-            if(measurement)memoryBudget=256*ResourcePolicy.MiB;
-            long usage=KnownPrivateBytes();bool over=ResourcePolicy.NeedsReclaim(usage,memoryBudget);
-            var now=DateTime.UtcNow;
-            var candidates=pages.Where(EligibleForRelease).Where(p=>ResourcePolicy.Eligible(now-p.LastActive,pressure)).OrderByDescending(p=>ResourcePolicy.DiscardPriority(now-p.LastActive,p.ReloadCostMs,p.Visits)).ToArray();
-            int released=0;
-            foreach(var p in candidates){
-                bool veryOld=now-p.LastActive>TimeSpan.FromMinutes(3)&&pages.Count(x=>x.Web!=null)>2;
-                if(!(over&&usage>memoryBudget*9/10)&&!veryOld)continue;
-                p.MemoryReason="Checking unsaved work";bool protect=await HasUnsavedInput(p);
-                if(!EligibleForRelease(p))continue;
-                if(protect){p.MemoryReason="Retained: detected input or media";_=SuspendHiddenAsync(p);continue;}
-                // Input and active state are checked again after checkpoint capture.
-                if(!await SaveCheckpoint(p)||!EligibleForRelease(p))continue;
-                if(await HasUnsavedInput(p)){p.MemoryReason="Retained: input changed";_=SuspendHiddenAsync(p);continue;}
-                if(!EligibleForRelease(p)||DateTime.UtcNow-p.LastActive<TimeSpan.FromSeconds(pressure?15:45))continue;
-                p.MemoryCheckpointPending=true;ReleaseView(p);p.MemoryReason="Unloaded for memory; reloads on selection";released++;usage=KnownPrivateBytes();
+            memoryBudget=measurement?256*ResourcePolicy.MiB:
+                ResourcePolicy.Budget(available?(long)system.TotalPhysical:8L*1024*ResourcePolicy.MiB,pressure);
+            double cpu=SampleBrowserCpu();
+
+            // Prioritize visible interaction, animation, and navigation before reclamation.
+            // Never change OS process priority or trim a live renderer's working set.
+            if(!measurement&&!ResourcePolicy.CanReclaimNow(
+                pressure,Current?.Loading==true,DateTime.UtcNow-lastActivation,cpu))
+            {
+                memoryDecision=$"Responsive mode · foreground busy or recently selected · CPU {cpu:P0} · deferring background inspection";
+                return;
             }
-            memoryDecision=$"Known engine processes {(environment?.IsCompletedSuccessfully==true ? environment.Result.GetProcessInfos().Count : 0)} · Soft budget {memoryBudget/ResourcePolicy.MiB} MiB · {(pressure?"Windows memory pressure":"normal pressure")} · {released} views released";
+
+            foreach(var p in pages.ToArray())
+                if(p.Web!=null&&p.Initialization?.IsCompleted!=false&&(p.AtHome||p.InternalKey.Length>0)
+                    &&!(p==Current&&p.InternalKey=="extensions")&&!installingExtension)
+                    ReleaseView(p);
+
+            long usage=KnownPrivateBytes();
+            bool over=ResourcePolicy.NeedsReclaim(usage,memoryBudget);
+            var now=DateTime.UtcNow;
+            var candidates=pages.Where(EligibleForRelease)
+                .Where(p=>now-p.LastActive>=ResourcePolicy.MinimumIdle(pressure,mode))
+                .OrderByDescending(p=>ResourcePolicy.DiscardPriority(now-p.LastActive,p.ReloadCostMs,p.Visits))
+                .ToArray();
+
+            int released=0,retained=0;
+            int maxRelease=ResourcePolicy.MaxReleasesPerScan(pressure,mode);
+            foreach(var p in candidates)
+            {
+                if(released>=maxRelease)break;
+                bool longIdle=now-p.LastActive>=ResourcePolicy.LongIdle(mode)
+                    &&pages.Count(x=>x.Web!=null)>2;
+                if(!measurement&&!(over&&usage>memoryBudget*9/10)&&!longIdle)continue;
+
+                await Task.Yield();
+                if(closing||p==Current||(Current?.Loading==true&&!pressure))break;
+                p.MemoryReason="Checking safe background state";
+                if(await HasUnsavedInput(p))
+                {
+                    retained++;p.MemoryReason="Retained: input, frames or media";
+                    _=SuspendHiddenAsync(p);
+                    continue;
+                }
+                if(!EligibleForRelease(p)||!await SaveCheckpoint(p))continue;
+                if(await HasUnsavedInput(p))
+                {
+                    retained++;p.MemoryReason="Retained: content changed during inspection";
+                    _=SuspendHiddenAsync(p);
+                    continue;
+                }
+                if(!EligibleForRelease(p)||DateTime.UtcNow-p.LastActive<ResourcePolicy.MinimumIdle(pressure,mode))
+                    continue;
+                p.MemoryCheckpointPending=true;
+                ReleaseView(p);
+                p.MemoryReason="Unloaded: reloads on selection";
+                released++;optimizationReleased++;
+                usage=KnownPrivateBytes();
+                if(!measurement&&usage<memoryBudget*9/10)break;
+            }
+            memoryDecision=$"{mode} · browser CPU {cpu:P0} · known private {usage/ResourcePolicy.MiB} MiB · soft budget {memoryBudget/ResourcePolicy.MiB} MiB · released {released}, protected {retained} (total {optimizationReleased})";
             RefreshSurfaces();
-        }catch(Exception) when(!measurement){memoryDecision="Memory check deferred; page state changed";}finally{reclaiming=false;}
+        }
+        catch(Exception) when(!measurement){memoryDecision="Optimization scan deferred; state changed";}
+        finally{reclaiming=false;}
     }
 }
