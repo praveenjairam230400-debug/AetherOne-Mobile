@@ -92,11 +92,11 @@ public sealed partial class BrowserForm : Form
             environment = CreateEnvironment();
             if (smoke) { await SmokeTest(); return; }
             var workspaceAtStart = state.ActiveWorkspace;
-            if (state.RestoreTabs && state.Sessions.Count > 0) {
+            if (initialUrl==null && state.RestoreTabs && state.Sessions.Count > 0) {
                 foreach (var entry in state.Sessions.Where(x => IsWeb(x.Url)).ToArray()) {
                     NewTab(entry.Url, false, entry.Workspace); pages[^1].Pinned = entry.Pinned; if(!string.IsNullOrWhiteSpace(entry.Title)) pages[^1].Title = entry.Title;
                 }
-            } else if(state.RestoreTabs) foreach (var url in state.Tabs.Where(IsWeb).ToArray()) NewTab(url, false);
+            } else if(initialUrl==null && state.RestoreTabs) foreach (var url in state.Tabs.Where(IsWeb).ToArray()) NewTab(url, false);
             state.ActiveWorkspace = workspaceAtStart; NewTab(initialUrl);
             try { await environment; var warm = Current; if (!closing && warm != null) await Ensure(warm); if (!closing) status.Text = "Engine ready · Ctrl+L to search · Shield controls ad blocking"; }
             catch (Exception e) { EngineError(e); }
