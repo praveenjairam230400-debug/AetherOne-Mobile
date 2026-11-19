@@ -7,7 +7,7 @@ namespace AetherOnePC;
 
 public sealed partial class BrowserForm : Form
 {
-    private Color bg = Color.FromArgb(11, 17, 25), panel = Color.FromArgb(20, 29, 40), ink = Color.FromArgb(235, 244, 250), mint = Color.FromArgb(113, 231, 201);
+    private Color bg = Color.FromArgb(32, 32, 32), panel = Color.FromArgb(43, 43, 43), ink = Color.FromArgb(242, 242, 242), mint = Color.FromArgb(120, 180, 255);
     private readonly TabDeck tabs = new TabDeck { Dock = DockStyle.Fill };
     private readonly TextBox address = new() { Dock = DockStyle.Fill, BorderStyle = BorderStyle.None, Font = new Font("Segoe UI", 12), PlaceholderText = "Search or enter an address" };
     private readonly Label status = new() { Dock = DockStyle.Fill, AutoEllipsis = true, TextAlign = ContentAlignment.MiddleLeft };
@@ -21,6 +21,7 @@ public sealed partial class BrowserForm : Form
     private bool closing;
     private readonly bool smoke;
     private double shownMs;
+    private readonly NavigationDiagnostics navigationDiagnostics = new();
     private static readonly HashSet<Keys> BrowserShortcuts = new() { Keys.Control|Keys.K, Keys.Control|Keys.N, Keys.Control|Keys.L, Keys.Control|Keys.T, Keys.Control|Keys.W, Keys.Control|Keys.D, Keys.Control|Keys.B, Keys.Control|Keys.H, Keys.Control|Keys.J, Keys.Control|Keys.F, Keys.Control|Keys.R, Keys.Control|Keys.P, Keys.Control|Keys.Shift|Keys.T, Keys.Control|Keys.Shift|Keys.N, Keys.Control|Keys.Tab, Keys.Control|Keys.Shift|Keys.Tab, Keys.Alt|Keys.Left, Keys.Alt|Keys.Right, Keys.F5 };
     private readonly List<BrowserTab> pages = [];
     private Button back = null!, forward = null!, reload = null!, shield = null!;
@@ -82,6 +83,7 @@ public sealed partial class BrowserForm : Form
         Deactivate+=(_,_)=>DismissPopups();
         tabs.SelectedIndexChanged += (_, _) => {
             var previous=lastSelected;if(previous!=null)previous.LastActive=DateTime.UtcNow;lastSelected=Current;if(Current!=null){Current.LastActive=DateTime.UtcNow;Current.Visits++;}address.Text=Current?.AtHome==true?"":Current?.Url??"";if(previous?.Web is {IsDisposed:false}&&previous!=Current)previous.Web.Visible=false;if(Current?.Web!=null){Current.Web.Visible=!Current.AtHome&&Current.InternalKey.Length==0;RestoreMemoryTarget(Current);}if(previous!=null&&previous!=Current)_=TrimHidden(previous);
+            lastActivation = DateTime.UtcNow;
             if (Current != null) { state.ActiveWorkspace = Current.Workspace; if (!Current.AtHome && Current.InternalKey.Length==0 && Current.Web == null) _ = Navigate(Current.Url, Current); }
             Sync(); QueueSave();
         };
@@ -180,6 +182,7 @@ public sealed partial class BrowserForm : Form
                 if (!extensionPage && !IsWeb(e.Uri)) { e.Cancel = true; status.Text = "Only HTTPS web pages are supported"; return; }
                 if (e.Uri.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !(smoke&&requestFixtureOrigin.Length>0&&e.Uri.StartsWith(requestFixtureOrigin+"/",StringComparison.Ordinal))) { e.Cancel = true; _ = Navigate(e.Uri, p); return; }
                 p.Url = e.Uri; p.AtHome = false; p.Blocked = 0; p.Observed = 0; p.Finished = 0; p.LastError = ""; p.Loading = true; p.Clock.Restart();
+                navigationDiagnostics.Start(p.Url);
                 ApplyPolicy(p); Sync();
             };
             core.WebResourceRequested += (_, e) =>
@@ -204,7 +207,9 @@ public sealed partial class BrowserForm : Form
             core.DOMContentLoaded+=(_,_)=>_=ApplyArticleRendering(p);
             core.NavigationCompleted += (_, e) =>
             {
-                p.Loading = false; p.Finished = p.Clock.ElapsedMilliseconds;if(e.IsSuccess){p.ReloadCostMs=p.ReloadCostMs==0?p.Finished:(p.ReloadCostMs*3+p.Finished)/4;_=RestoreCheckpoint(p);}
+                p.Loading = false; p.Finished = p.Clock.ElapsedMilliseconds;
+                navigationDiagnostics.Complete(p.Url, e.IsSuccess, p.Finished);
+                if(e.IsSuccess){p.ReloadCostMs=p.ReloadCostMs==0?p.Finished:(p.ReloadCostMs*3+p.Finished)/4;_=RestoreCheckpoint(p);}
                 if (!e.IsSuccess) p.LastError = e.WebErrorStatus.ToString();
                 if (e.IsSuccess && IsWeb(p.Url)) { state.History.RemoveAll(x => x.Url == p.Url); state.History.Insert(0, new SavedLink { Url = p.Url, Title = p.Title }); state.History = state.History.Take(300).ToList(); }
                 QueueSave(); Sync();if(p!=Current)_=TrimHidden(p);
