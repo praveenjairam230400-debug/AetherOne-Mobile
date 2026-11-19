@@ -77,6 +77,7 @@ public sealed partial class BrowserForm : Form
         Size = new Size(Math.Min(1320, Screen.PrimaryScreen!.WorkingArea.Width - 24), Math.Min(860, Screen.PrimaryScreen.WorkingArea.Height - 24));
         StartPosition = FormStartPosition.CenterScreen; BackColor = bg; ForeColor = ink; Font = new Font("Segoe UI", 10);
         Icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
+        HandleCreated += (_, _) => AetherWindowChrome.Apply(Handle);
         BuildWorkspaceUi();
         KeyPreview = true;
         KeyDown += (_, e) => { if (e.KeyData == (Keys.Control | Keys.Shift | Keys.Escape)) { e.Handled = true; e.SuppressKeyPress = true; ShowAetherTaskManager(); } };
