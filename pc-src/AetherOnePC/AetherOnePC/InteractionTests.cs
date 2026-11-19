@@ -7,6 +7,8 @@ public sealed partial class BrowserForm
     private static IEnumerable<Control> Descendants(Control root){foreach(Control c in root.Controls){yield return c;foreach(var child in Descendants(c))yield return child;}}
     private async Task TestInteractions(string output,BrowserTab original)
     {
+        if (horizontalTabs == null || horizontalTabs.PointToScreen(Point.Empty).Y != Bounds.Top)
+            throw new Exception("A separate caption still occupies space above the tab strip");
         SelectPage(original);Activate();bookmarkButton!.PerformClick();await Task.Delay(150);if(bookmarkPopup?.Visible!=true||bookmarkButton.Glyph!="bookmark-filled")throw new Exception("Bookmark save feedback missing");CaptureWindow(Path.Combine(output,"AetherOne-Bookmark.png"));
         var popupBody=((ToolStripControlHost)bookmarkPopup.Items[0]).Control;popupBody.Controls.OfType<TextBox>().Single().Text="My saved fixture";popupBody.Controls.OfType<Button>().Single(x=>x.Text=="Done").PerformClick();if(!state.Bookmarks.Any(x=>x.Url==original.Url&&x.Title=="My saved fixture"))throw new Exception("Bookmark rename failed");
         OpenInternal("bookmarks");var manager=Current!;var open=Descendants(manager.NativePage!).OfType<Button>().First(x=>x.Text=="Open");int count=pages.Count;open.PerformClick();await WaitFor(async()=>pages.Count==count+1&&Current?.Web?.CoreWebView2!=null&&!Current.Loading);if(Current!.Url!=original.Url)throw new Exception("Bookmark Open action failed");CloseTab(Current);CloseTab(manager);SelectPage(original);

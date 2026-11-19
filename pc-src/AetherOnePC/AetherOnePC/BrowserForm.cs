@@ -36,6 +36,7 @@ public sealed partial class BrowserForm : Form
         public WebView2? Web;
         public Task? Initialization;
         public int NavigationIntent;
+        public DateTime NextMemoryProbe;
         public ulong? ActiveNavigationId;
         public string Url = "";
         public string Title = "New tab";
@@ -227,6 +228,7 @@ public sealed partial class BrowserForm : Form
                 if (!extensionPage && !IsWeb(e.Uri)) { e.Cancel = true; status.Text = "Only HTTPS web pages are supported"; return; }
                 if (e.Uri.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !(smoke&&requestFixtureOrigin.Length>0&&e.Uri.StartsWith(requestFixtureOrigin+"/",StringComparison.Ordinal))) { e.Cancel = true; _ = Navigate(e.Uri, p); return; }
                 p.ActiveNavigationId = e.NavigationId;
+                p.NextMemoryProbe = default;
                 p.Url = e.Uri; p.AtHome = false; p.Blocked = 0; p.Observed = 0; p.Finished = 0; p.LastError = ""; p.Loading = true; p.Clock.Restart();
                 navigationDiagnostics.Start(p.Url);
                 ApplyPolicy(p); Sync();
@@ -245,7 +247,7 @@ public sealed partial class BrowserForm : Form
                     e.Response = core.Environment.CreateWebResourceResponse(null, 204, "No Content", "Cache-Control: no-store\r\n");
                 }
             };
-            core.FaviconChanged += async (_, _) => { try { using var stream = await core.GetFaviconAsync(CoreWebView2FaviconImageFormat.Png); using var decoded = Image.FromStream(stream); var icon = new Bitmap(decoded,16,16); if(closing || !pages.Contains(p) || p.Web != web){icon.Dispose();return;} p.Favicon?.Dispose();p.Favicon=icon;CacheFavicon(p.Url,icon);RefreshSurfaces(); } catch { } };
+            core.FaviconChanged += async (_, _) => { try { using var stream = await core.GetFaviconAsync(CoreWebView2FaviconImageFormat.Png); using var decoded = Image.FromStream(stream); var icon = new Bitmap(decoded,16,16); if(closing || !pages.Contains(p) || p.Web != web){icon.Dispose();return;} p.Favicon?.Dispose();p.Favicon=icon;RefreshSurfaces(); } catch { } };
             core.IsDocumentPlayingAudioChanged += (_,_) => {p.Audible=core.IsDocumentPlayingAudio;RefreshSurfaces();};
             core.DocumentTitleChanged += (_, _) => { p.Title = core.DocumentTitle; p.Container.Text = Short(p.Title); RefreshSurfaces(); if (p == Current) Text = p.Title + " — Aether One"; QueueSave(); };
             core.SourceChanged += (_, _) => { if (IsWeb(core.Source)) p.Url = core.Source; Sync(); };
@@ -317,8 +319,8 @@ public sealed partial class BrowserForm : Form
             p.NativePage?.Dispose();
             p.NativePage = null;
             p.Url = url;
-            var web = p.Web;p.Title=web.CoreWebView2.DocumentTitle; ApplyPolicy(p); p.AtHome = false; p.HideHome(); web.Visible = p==Current;if(p==Current){web.BringToFront();web.Focus();}
-            if (web.Source?.AbsoluteUri == url && !p.Loading && p.Finished > 0) { Sync(); status.Text = "Live page reused · no navigation request"; return; }
+            var web = p.Web;p.Title=web.CoreWebView2.DocumentTitle; p.AtHome = false; p.HideHome(); web.Visible = p==Current;if(p==Current)web.BringToFront();
+            if (web.Source?.AbsoluteUri == url && !p.Loading && p.Finished > 0) { if(p==Current)web.Focus(); Sync(); status.Text = "Live page reused · no navigation request"; return; }
             p.Loading = true; web.CoreWebView2.Navigate(url); if(p==Current)web.Focus(); Sync(); QueueSave();
         }
         catch (Exception e) { if (!closing && p == Current && intent == p.NavigationIntent) EngineError(e); }

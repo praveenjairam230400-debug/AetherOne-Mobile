@@ -4,8 +4,6 @@ using Microsoft.Web.WebView2.Core;
 namespace AetherOnePC;
 public sealed partial class BrowserForm
 {
-    private string FaviconPath(string url)=>Path.Combine(profilePath,"Favicons",Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Policy.Host(url))))+".png");
-    private void CacheFavicon(string url,Bitmap icon){if(!IsWeb(url))return;try{using var memory=new MemoryStream();icon.Save(memory,System.Drawing.Imaging.ImageFormat.Png);var bytes=memory.ToArray();var path=FaviconPath(url);_=Task.Run(()=>{try{Directory.CreateDirectory(Path.GetDirectoryName(path)!);if(File.Exists(path)||Directory.EnumerateFiles(Path.GetDirectoryName(path)!,"*.png").Take(257).Count()<256)File.WriteAllBytes(path,bytes);}catch{}});}catch{}}
     private HorizontalTabs? horizontalTabs;
     private FavoritesBar? favorites;
     private FlowLayoutPanel? extensionPins;
@@ -23,10 +21,38 @@ public sealed partial class BrowserForm
     private void BuildBrowserChrome()
     {
         Visual.SetTheme(state.DarkTheme);bg=Visual.Base;panel=Visual.Surface;ink=Visual.Text;mint=Visual.Mint;
-        FormBorderStyle=FormBorderStyle.Sizable;BackColor=Visual.Base;MinimumSize=new Size(860,560);
+        FormBorderStyle=FormBorderStyle.None;BackColor=Visual.Base;MinimumSize=new Size(860,560);
         var root=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=1,RowCount=5,BackColor=Visual.Base,Padding=Padding.Empty,Margin=Padding.Empty};
         foreach(var height in new[]{43,45,state.ShowFavorites?30:0})root.RowStyles.Add(new RowStyle(SizeType.Absolute,height));root.RowStyles.Add(new RowStyle(SizeType.Percent,100));root.RowStyles.Add(new RowStyle(SizeType.Absolute,2));Controls.Add(root);
-        horizontalTabs=new HorizontalTabs(this){Dock=DockStyle.Fill,Margin=Padding.Empty};root.Controls.Add(horizontalTabs,0,0);
+        var titleRow = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty, BackColor = Visual.Base };
+        horizontalTabs = new HorizontalTabs(this) { Dock = DockStyle.Fill, Margin = Padding.Empty };
+        titleRow.Controls.Add(horizontalTabs);
+        var windowButtons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Right, Width = 132, Margin = Padding.Empty,
+            FlowDirection = FlowDirection.LeftToRight, WrapContents = false
+        };
+        titleRow.Controls.Add(windowButtons);
+        foreach (var (label, glyph, action) in new (string, string, Action)[]
+        {
+            ("Minimize", "minimize", () => WindowState = FormWindowState.Minimized),
+            ("Maximize or restore", "maximize", ToggleMaximized),
+            ("Close window", "close", Close)
+        })
+        {
+            var button = (ChromeButton)Button("", label, action);
+            button.Glyph = glyph;
+            button.Dock = DockStyle.None;
+            button.Size = new Size(44, 37);
+            button.Margin = Padding.Empty;
+            windowButtons.Controls.Add(button);
+            if (glyph == "maximize") Resize += (_, _) =>
+            {
+                button.Glyph = WindowState == FormWindowState.Maximized ? "restore" : "maximize";
+                button.Invalidate();
+            };
+        }
+        root.Controls.Add(titleRow,0,0);
         var bar=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=11,RowCount=1,Padding=new Padding(8,5,8,5),BackColor=Visual.Surface,Margin=Padding.Empty};browserToolbar=bar;bar.RowStyles.Add(new RowStyle(SizeType.Percent,100));
         for(int i=0;i<11;i++)bar.ColumnStyles.Add(new ColumnStyle(i==4?SizeType.Percent:SizeType.Absolute,i==4?100:i==8?0:36));
         Button Tool(string icon,string name,Action action){var b=(ChromeButton)Button("",name,action);b.Glyph=icon;b.Margin=Padding.Empty;b.BackColor=Visual.Surface;return b;}
@@ -136,6 +162,9 @@ public sealed partial class BrowserForm
         private bool revealSelection = true;
         private Rectangle tabList;
 
+        private bool EmptyCaption(Point point) =>
+            !tabList.Contains(point) && !plus.Contains(point) && !hits.Any(hit => hit.Rect.Contains(point));
+
         internal void RevealSelection()
         {
             revealSelection = true;
@@ -234,7 +263,13 @@ public sealed partial class BrowserForm
                 }
                 return;
             }
-            if (e.Button == MouseButtons.Left && plus.Contains(e.Location)) owner.NewTab();
+            if (e.Button == MouseButtons.Left && plus.Contains(e.Location))
+            {
+                owner.NewTab();
+                return;
+            }
+            if (e.Button == MouseButtons.Left && EmptyCaption(e.Location))
+                owner.DragCaption(e.Clicks);
         }
         protected override void OnMouseMove(MouseEventArgs e){if(dragging!=null && e.Button==MouseButtons.Left){if(Math.Abs(e.X-dragStart.X)>8||Math.Abs(e.Y-dragStart.Y)>8)moved=true;if(moved){var landing=hits.FirstOrDefault(h=>h.Rect.Contains(e.Location)).Page;if(landing!=null&&landing!=dragging&&landing.Pinned==dragging.Pinned){owner.ReorderTab(dragging,landing);Invalidate();}}}var p=hits.FirstOrDefault(h=>h.Rect.Contains(e.Location)).Page;var close=p!=null&&closeHits.TryGetValue(p,out var rect)&&rect.Contains(e.Location)?p:null;if(close!=hotClose){hotClose=close;Invalidate();}if(p!=hovered){hovered=p;tip.SetToolTip(this,p==null?"":p.Title+"\n"+p.Url+(p.Sleeping?"\nSleeping · reloads on selection":p.Suspended?"\nSuspended · page state retained":""));Invalidate();}base.OnMouseMove(e);}
         protected override void OnMouseUp(MouseEventArgs e){if(dragging!=null){var tab=dragging;bool detach=moved&&(e.Y< -30||e.Y>Height+40);dragging=null;moved=false;Capture=false;if(detach)owner.DetachTab(tab);}base.OnMouseUp(e);}

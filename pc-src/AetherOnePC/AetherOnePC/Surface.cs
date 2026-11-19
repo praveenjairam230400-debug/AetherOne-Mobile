@@ -49,6 +49,9 @@ internal static class Visual
             case "home":Path(new(3,11),new(12,4),new(21,11));Path(new(6,10),new(6,20),new(18,20),new(18,10));break;
             case "search":g.DrawEllipse(p,4,4,12,12);Line(15,15,21,21);break;
             case "plus":Line(12,5,12,19);Line(5,12,19,12);break;
+            case "minimize":Line(6,12,18,12);break;
+            case "maximize":g.DrawRectangle(p,6,6,12,12);break;
+            case "restore":g.DrawRectangle(p,5,9,10,10);Path(new(9,7),new(9,5),new(19,5),new(19,15),new(17,15));break;
             case "close":Line(6,6,18,18);Line(6,18,18,6);break;
             case "shield":Path(new(12,3),new(20,6),new(19,14),new(16,19),new(12,22),new(8,19),new(5,14),new(4,6),new(12,3));Path(new(8,12),new(11,15),new(16,9));break;
             case "sidebar":g.DrawRectangle(p,3,4,18,16);Line(9,4,9,20);break;

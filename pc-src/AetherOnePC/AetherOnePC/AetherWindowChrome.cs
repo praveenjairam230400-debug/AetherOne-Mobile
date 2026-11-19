@@ -41,3 +41,59 @@ internal static class AetherWindowChrome
         catch (EntryPointNotFoundException) { }
     }
 }
+
+
+public sealed partial class BrowserForm
+{
+    [DllImport("user32.dll")]
+    private static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+    private static extern IntPtr SendWindowMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+
+    private void ToggleMaximized()
+    {
+        if (WindowState != FormWindowState.Maximized)
+            MaximizedBounds = Screen.FromControl(this).WorkingArea;
+        WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized;
+    }
+
+    private void DragCaption(int clicks)
+    {
+        if (clicks > 1) { ToggleMaximized(); return; }
+        ReleaseCapture();
+        SendWindowMessage(Handle, 0xA1, (IntPtr)2, IntPtr.Zero);
+    }
+
+    protected override void WndProc(ref Message message)
+    {
+        if (message.Msg == 0x83)
+        {
+            message.Result = IntPtr.Zero;
+            return;
+        }
+        base.WndProc(ref message);
+        if (message.Msg != 0x84 || WindowState == FormWindowState.Maximized || message.Result != (IntPtr)1)
+            return;
+
+        long coordinates = message.LParam.ToInt64();
+        var point = PointToClient(new Point((short)coordinates, (short)(coordinates >> 16)));
+        int edge = Math.Max(5, DeviceDpi * 5 / 96);
+        bool left = point.X < edge, right = point.X >= ClientSize.Width - edge;
+        bool top = point.Y < edge, bottom = point.Y >= ClientSize.Height - edge;
+        if (top) message.Result = (IntPtr)(left ? 13 : right ? 14 : 12);
+        else if (bottom) message.Result = (IntPtr)(left ? 16 : right ? 17 : 15);
+        else if (left || right) message.Result = (IntPtr)(left ? 10 : 11);
+    }
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var parameters = base.CreateParams;
+            // Keep the sizing frame for Windows resize behavior; remove it from layout below.
+            parameters.Style |= 0x00040000 | 0x00080000 | 0x00030000;
+            return parameters;
+        }
+    }
+}

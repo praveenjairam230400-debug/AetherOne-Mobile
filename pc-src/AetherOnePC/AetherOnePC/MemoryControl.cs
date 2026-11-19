@@ -79,21 +79,70 @@ public sealed partial class BrowserForm
         }catch(OperationCanceledException){}catch{}finally{if(p.CancelMemory==c)p.CancelMemory=null;c.Dispose();}
     }
     private static void ReleaseView(BrowserTab p){p.CancelMemory?.Cancel();p.Web?.Dispose();p.Web=null;p.Initialization=null;p.Suspended=false;p.SuspendUnavailable=false;p.FilterSignature="";p.Sleeping=!p.AtHome&&p.InternalKey.Length==0;}
-    private async Task<bool> HasUnsavedInput(BrowserTab p)
+    private async Task<string?> InspectCheckpoint(BrowserTab tab)
     {
-        if(p.Web?.CoreWebView2==null)return true;
-        try{RestoreMemoryTarget(p);string answer=await p.Web.CoreWebView2.ExecuteScriptAsync("""
-            (()=>{if(document.querySelector('iframe,frame'))return true;if(document.querySelector('video:not([paused]),audio:not([paused])')){for(const e of document.querySelectorAll('audio,video'))if(!e.paused)return true;}
-            for(const e of document.querySelectorAll('input,textarea,select,[contenteditable="true"]')){
-            if(e.isContentEditable&&e.textContent.trim())return true;if((e.tagName==='TEXTAREA'||['text','email','password','tel'].includes(e.type))&&e.value.trim())return true;
-            if(e.tagName==='SELECT'&&Array.from(e.options).some(o=>o.selected!==o.defaultSelected))return true;
-            if(e.type==='checkbox'||e.type==='radio'){if(e.checked!==e.defaultChecked)return true;}else if(e.type!=='hidden'&&e.type!=='button'&&e.type!=='submit'&&e.value!==e.defaultValue)return true;}
-            return false;})()
-            """);return answer!="false";}catch{return true;}
+        var web = tab.Web;
+        if (web?.CoreWebView2 == null) return "view unavailable";
+        string url = tab.Url;
+        try
+        {
+            RestoreMemoryTarget(tab);
+            string result = await web.CoreWebView2.ExecuteScriptAsync("""
+                (() => {
+                    const pending = [document];
+                    const visited = new Set();
+                    let inspected = 0;
+                    while (pending.length) {
+                        const root = pending.pop();
+                        if (visited.has(root)) continue;
+                        visited.add(root);
+                        if (visited.size > 24) return { reason: "complex embedded content" };
+                        const nodes = (root.ownerDocument || root).createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+                        for (let e; (e = nodes.nextNode());) {
+                            if (++inspected > 12000) return { reason: "complex document" };
+                            if (e.shadowRoot) pending.push(e.shadowRoot);
+                            if (e.matches("iframe, frame")) {
+                                const child = e.contentDocument;
+                                if (!child || child.readyState !== "complete")
+                                    return { reason: "uninspectable embedded content" };
+                                pending.push(child);
+                            }
+                            if (e.matches("audio, video") && !e.paused) return { reason: "media playing" };
+                            if (e.hasAttribute("contenteditable") && e.isContentEditable && e.textContent.trim())
+                                return { reason: "editable content" };
+                            if (e.matches("textarea") && e.value.trim()) return { reason: "draft" };
+                            if (e.matches("select") && Array.from(e.options).some(o => o.selected !== o.defaultSelected))
+                                return { reason: "modified form" };
+                            if (!e.matches("input")) continue;
+                            if (["hidden", "submit", "button", "reset", "image"].includes(e.type)) continue;
+                            if (["checkbox", "radio"].includes(e.type)) {
+                                if (e.checked !== e.defaultChecked) return { reason: "modified form" };
+                            } else if (e.value !== e.defaultValue ||
+                                       (["text", "email", "password", "tel"].includes(e.type) && e.value.trim())) {
+                                return { reason: "draft or modified form" };
+                            }
+                        }
+                    }
+                    return { url: location.href, x: scrollX, y: scrollY };
+                })()
+                """).WaitAsync(TimeSpan.FromSeconds(2));
+            using var value = JsonDocument.Parse(result);
+            var data = value.RootElement;
+            if (data.TryGetProperty("reason", out var reason)) return reason.GetString() ?? "unknown page state";
+            if (tab.Web != web || tab.Url != url || data.GetProperty("url").GetString() != url)
+                return "page changed";
+            tab.SavedScrollX = data.GetProperty("x").GetDouble();
+            tab.SavedScrollY = data.GetProperty("y").GetDouble();
+            tab.SavedZoom = web.ZoomFactor;
+            tab.CheckpointUrl = url;
+            return null;
+        }
+        catch { return "page state unavailable"; }
     }
+
     private async Task ReclaimInactive(bool measurement=false)
     {
-        if(reclaiming||!state.MemorySaver||closing||DownloadActive)return;
+        if(reclaiming||!state.MemorySaver||closing||DownloadActive || environment?.IsCompletedSuccessfully != true)return;
         reclaiming=true;
         try
         {
@@ -122,19 +171,23 @@ public sealed partial class BrowserForm
                     ReleaseView(p);
 
             bool over=ResourcePolicy.NeedsReclaim(usage,memoryBudget);
+            bool surge = ResourcePolicy.AboveReclaimWatermark(usage, memoryBudget);
             var now=DateTime.UtcNow;
+            int liveViews = pages.Count(x => x.Web != null);
             var candidates=pages.Where(EligibleForRelease)
-                .Where(p=>now-p.LastActive>=ResourcePolicy.MinimumIdle(pressure,mode))
+                .Where(p => (measurement || now >= p.NextMemoryProbe) &&
+                    now - p.LastActive >= ResourcePolicy.MinimumIdle(pressure, mode))
                 .OrderByDescending(p=>ResourcePolicy.DiscardPriority(now-p.LastActive,p.ReloadCostMs,p.Visits))
                 .ToArray();
 
             int released=0,retained=0;
-            int maxRelease=ResourcePolicy.MaxReleasesPerScan(pressure,mode);
+            int maxRelease = ResourcePolicy.MaxReleasesPerScan(pressure || surge, mode);
+            int probeBudget = measurement ? candidates.Length : maxRelease + 2;
             foreach(var p in candidates)
             {
-                if(released>=maxRelease)break;
+                if (released >= maxRelease || probeBudget == 0) break;
                 bool longIdle=now-p.LastActive>=ResourcePolicy.LongIdle(mode)
-                    &&pages.Count(x=>x.Web!=null)>2;
+                    && liveViews - released > 2;
                 if(!measurement&&!(over&&usage>memoryBudget*9/10)&&!longIdle)continue;
 
                 await Task.Yield();
@@ -143,30 +196,39 @@ public sealed partial class BrowserForm
                 if (!EligibleForRelease(p)) continue;
                 var inspectedView = p.Web;
                 var inspectedNavigation = p.ActiveNavigationId;
-                p.MemoryReason="Checking safe background state";
-                if(await HasUnsavedInput(p))
+                probeBudget--;
+                p.MemoryReason = "Checking safe background state";
+                string? reason = await InspectCheckpoint(p);
+                if (reason != null)
                 {
-                    retained++;p.MemoryReason="Retained: input, frames or media";
-                    _=SuspendHiddenAsync(p);
-                    continue;
-                }
-                if(!EligibleForRelease(p)||!await SaveCheckpoint(p))continue;
-                if(await HasUnsavedInput(p))
-                {
-                    retained++;p.MemoryReason="Retained: content changed during inspection";
-                    _=SuspendHiddenAsync(p);
+                    if (p.Web == inspectedView && p.ActiveNavigationId == inspectedNavigation && p != Current)
+                    {
+                        retained++;
+                        p.NextMemoryProbe = DateTime.UtcNow.AddMinutes(2);
+                        p.MemoryReason = "Retained: " + reason;
+                        _ = SuspendHiddenAsync(p);
+                    }
                     continue;
                 }
                 if (!state.MemorySaver || !EligibleForRelease(p) || p.Web != inspectedView ||
                     p.ActiveNavigationId != inspectedNavigation ||
                     DateTime.UtcNow - p.LastActive < ResourcePolicy.MinimumIdle(pressure, mode))
+                {
+                    if (p != Current && p.Web == inspectedView) _ = SuspendHiddenAsync(p);
                     continue;
+                }
+                if (!measurement && !ResourcePolicy.CanReclaimNow(pressure, Current?.Loading == true,
+                    DateTime.UtcNow - lastActivation, cpu))
+                {
+                    _ = SuspendHiddenAsync(p);
+                    break;
+                }
                 p.MemoryCheckpointPending=true;
                 ReleaseView(p);
                 p.MemoryReason="Unloaded: reloads on selection";
                 released++;optimizationReleased++;
                 // Renderer exit is asynchronous. Resample on the next scan.
-                if (!measurement && !pressure) break;
+                if (!measurement && !pressure && !surge) break;
             }
             memoryDecision=$"{mode} · browser CPU {cpu:P0} · known private {usage/ResourcePolicy.MiB} MiB · soft budget {memoryBudget/ResourcePolicy.MiB} MiB · released {released}, protected {retained} (total {optimizationReleased})";
             RefreshSurfaces();
