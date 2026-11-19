@@ -76,7 +76,9 @@ public sealed partial class BrowserForm
         };
         var refresh = new Button { Text = "Refresh", Width = 92, Height = 32, FlatStyle = FlatStyle.Flat };
         var close = new Button { Text = "Close", Width = 92, Height = 32, FlatStyle = FlatStyle.Flat };
+        var export = new Button { Text = "Export timings", Width = 128, Height = 32, FlatStyle = FlatStyle.Flat };
         footer.Controls.Add(refresh);
+        footer.Controls.Add(export);
         footer.Controls.Add(close);
         footer.Controls.Add(info);
         window.Controls.Add(table);
@@ -115,6 +117,18 @@ public sealed partial class BrowserForm
         var timer = new System.Windows.Forms.Timer { Interval = 2000 };
         timer.Tick += (_, _) => UpdateRows();
         refresh.Click += (_, _) => UpdateRows();
+        export.Click += (_, _) =>
+        {
+            using var dialog = new SaveFileDialog
+            {
+                Title = "Export measured Aether navigation timings",
+                Filter = "JSON files (*.json)|*.json",
+                FileName = "aether-navigation-timings.json"
+            };
+            if (dialog.ShowDialog(window) != DialogResult.OK) return;
+            try { File.WriteAllText(dialog.FileName, navigationDiagnostics.ExportJson()); }
+            catch (Exception ex) { MessageBox.Show(window, ex.Message, "Export failed", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        };
         close.Click += (_, _) => window.Close();
         window.FormClosed += (_, _) =>
         {
