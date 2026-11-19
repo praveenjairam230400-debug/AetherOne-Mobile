@@ -458,7 +458,11 @@ public sealed partial class BrowserForm : Form
     {
         string output=Environment.GetEnvironmentVariable("AETHER_SMOKE_OUTPUT")??Path.Combine(profilePath,"Results");Directory.CreateDirectory(output);
         try {
-            NewTab();var p=Current!;await Ensure(p);if(Environment.GetEnvironmentVariable("AETHER_BENCHMARK")=="1"){await RunBenchmark(output,p);await RunRequestWorkload(output);await RunMemoryWorkload(output);Close();return;}
+            NewTab();
+            var p = Current!;
+            if (p.Web != null || environment != null) throw new Exception("New tab started WebView2 before navigation");
+            await Ensure(p);
+            if(Environment.GetEnvironmentVariable("AETHER_BENCHMARK")=="1"){await RunBenchmark(output,p);await RunRequestWorkload(output);await RunMemoryWorkload(output);Close();return;}
             await Task.Delay(300);CaptureWindow(Path.Combine(output,"AetherOne-Home.png"));
             string fixtures=Path.Combine(profilePath,"Fixtures");Directory.CreateDirectory(fixtures);
             using(var icon=new Bitmap(32,32)){using var g=Graphics.FromImage(icon);g.Clear(Color.Coral);icon.Save(Path.Combine(fixtures,"favicon.png"));}

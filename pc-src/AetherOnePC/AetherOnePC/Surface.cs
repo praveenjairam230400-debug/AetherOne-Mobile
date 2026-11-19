@@ -9,7 +9,18 @@ internal static class Visual
 {
     public static Color Base = Color.FromArgb(27, 29, 33), Surface = Color.FromArgb(32, 34, 39), Card = Color.FromArgb(42, 44, 50), Stroke = Color.FromArgb(62, 65, 72), Text = Color.FromArgb(237, 242, 248), Muted = Color.FromArgb(165, 171, 182), Mint = Color.FromArgb(132, 229, 204), Lilac = Color.FromArgb(186, 173, 245);
     public static Color Hover=Color.FromArgb(61,59,72);
-    public static void SetTheme(bool dark){Base=dark?Color.FromArgb(33,32,39):Color.FromArgb(226,224,234);Surface=dark?Color.FromArgb(45,43,52):Color.FromArgb(248,247,252);Card=dark?Color.FromArgb(55,53,65):Color.White;Stroke=dark?Color.FromArgb(75,72,88):Color.FromArgb(219,215,230);Text=dark?Color.FromArgb(242,239,250):Color.FromArgb(39,35,52);Muted=dark?Color.FromArgb(179,174,193):Color.FromArgb(107,101,122);Mint=Color.FromArgb(245,116,68);Lilac=dark?Color.FromArgb(188,171,255):Color.FromArgb(101,65,204);Hover=dark?Color.FromArgb(65,61,80):Color.FromArgb(231,226,245);}
+    public static void SetTheme(bool dark)
+    {
+        Base = dark ? Color.FromArgb(30, 33, 36) : Color.FromArgb(232, 237, 239);
+        Surface = dark ? Color.FromArgb(40, 44, 47) : Color.FromArgb(247, 250, 251);
+        Card = dark ? Color.FromArgb(50, 55, 58) : Color.White;
+        Stroke = dark ? Color.FromArgb(70, 77, 82) : Color.FromArgb(210, 219, 223);
+        Text = dark ? Color.FromArgb(237, 243, 245) : Color.FromArgb(28, 38, 41);
+        Muted = dark ? Color.FromArgb(164, 179, 184) : Color.FromArgb(80, 98, 104);
+        Mint = dark ? Color.FromArgb(116, 220, 193) : Color.FromArgb(13, 111, 93);
+        Lilac = Mint;
+        Hover = dark ? Color.FromArgb(55, 64, 67) : Color.FromArgb(213, 230, 227);
+    }
     public static GraphicsPath Shape(RectangleF r, float radius)
     {
         var p = new GraphicsPath(); float d = radius * 2;

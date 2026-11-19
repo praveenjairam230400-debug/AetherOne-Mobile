@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
-using System.Runtime.InteropServices;
 using Microsoft.Web.WebView2.Core;
 namespace AetherOnePC;
 public sealed partial class BrowserForm
@@ -61,11 +60,43 @@ public sealed partial class BrowserForm
     private void ShowBrowserMenu()
     {
         suggestions?.Hide();suggestTimer.Stop();predictCancellation?.Cancel();
-        var m=BrowserContextMenu();void Item(string name,Action run,string key=""){var i=new ToolStripMenuItem(name){ShortcutKeyDisplayString=key,AutoSize=false,Width=282,Height=34};i.Click+=(_,_)=>run();m.Items.Add(i);}
-        Item("New tab",()=>NewTab(),"Ctrl+T");Item("New window",()=>LaunchProfile(activeProfileId),"Ctrl+N");Item("Reopen closed tab",ReopenClosed,"Ctrl+Shift+T");m.Items.Add(new ToolStripSeparator());
-        Item("Profiles",ProfileMenu);Item("Bookmarks",()=>OpenInternal("bookmarks"),"Ctrl+B");Item("History",()=>OpenInternal("history"),"Ctrl+H");Item("Downloads",()=>OpenInternal("downloads"),"Ctrl+J");Item("Extensions",()=>OpenInternal("extensions"));m.Items.Add(new ToolStripSeparator());
-        Item("Zoom",ZoomMenu);Item("Find in page",()=>_=Find(),"Ctrl+F");Item("Print",()=>Current?.Web?.CoreWebView2?.ShowPrintUI(),"Ctrl+P");Item("Save page as PDF",()=>Current?.Web?.CoreWebView2?.ShowPrintUI());m.Items.Add(new ToolStripSeparator());
-        Item("Shields & privacy",()=>OpenInternal("settings/privacy"));Item("Site settings",()=>OpenInternal("settings/site"));Item("Loading inspector",()=>_=Inspector());Item("Sleep inactive tabs",()=>SleepInactive());Item("Settings",()=>OpenInternal("settings"));Item("About Aether One",()=>OpenInternal("settings/about"));Item("Exit",Close);bool web=Current is {AtHome:false,InternalKey:"",Web:not null};foreach(ToolStripItem item in m.Items)if(item.Text is "Zoom" or "Find in page" or "Print" or "Save page as PDF" or "Loading inspector")item.Enabled=web;m.Show(this,new Point(Math.Max(0,ClientSize.Width-300),85));
+        var menu = BrowserContextMenu();
+        bool hasPage = Current is { AtHome: false, InternalKey: "", Web: not null };
+        void Add(ToolStripItemCollection items, string label, Action action, string shortcut = "", bool enabled = true)
+        {
+            var item = new ToolStripMenuItem(label) { ShortcutKeyDisplayString = shortcut, Enabled = enabled };
+            item.Click += (_, _) => action();
+            items.Add(item);
+        }
+
+        Add(menu.Items, "New tab", () => NewTab(), "Ctrl+T");
+        Add(menu.Items, "New window", () => LaunchProfile(activeProfileId), "Ctrl+N");
+        Add(menu.Items, "Reopen closed tab", ReopenClosed, "Ctrl+Shift+T");
+        menu.Items.Add(new ToolStripSeparator());
+        Add(menu.Items, "Bookmarks", () => OpenInternal("bookmarks"), "Ctrl+B");
+        Add(menu.Items, "History", () => OpenInternal("history"), "Ctrl+H");
+        Add(menu.Items, "Downloads", () => OpenInternal("downloads"), "Ctrl+J");
+        Add(menu.Items, "Extensions", () => OpenInternal("extensions"));
+        Add(menu.Items, "Profiles", ProfileMenu);
+        menu.Items.Add(new ToolStripSeparator());
+        Add(menu.Items, "Zoom", ZoomMenu, enabled: hasPage);
+        Add(menu.Items, "Find in page", () => _ = Find(), "Ctrl+F", hasPage);
+        Add(menu.Items, "Print", () => Current?.Web?.CoreWebView2?.ShowPrintUI(), "Ctrl+P", hasPage);
+
+        var tools = new ToolStripMenuItem("More tools") { DropDown = BrowserContextMenu() };
+        Add(tools.DropDownItems, "Save page as PDF", () => Current?.Web?.CoreWebView2?.ShowPrintUI(), enabled: hasPage);
+        Add(tools.DropDownItems, "Browser task manager", ShowAetherTaskManager, "Ctrl+Shift+Esc");
+        Add(tools.DropDownItems, "Loading inspector", () => _ = Inspector(), enabled: hasPage);
+        Add(tools.DropDownItems, "Sleep inactive tabs", () => SleepInactive());
+        Add(tools.DropDownItems, "Developer tools", () => Current?.Web?.CoreWebView2?.OpenDevToolsWindow(), "F12", hasPage);
+        menu.Items.Add(tools);
+        menu.Items.Add(new ToolStripSeparator());
+        Add(menu.Items, "Shields and privacy", () => OpenInternal("settings/privacy"));
+        Add(menu.Items, "Site settings", () => OpenInternal("settings/site"));
+        Add(menu.Items, "Settings", () => OpenInternal("settings"));
+        Add(menu.Items, "About Aether One", () => OpenInternal("settings/about"));
+        Add(menu.Items, "Exit", Close);
+        menu.Show(this, new Point(Math.Max(0, ClientSize.Width - menu.PreferredSize.Width - 8), 86));
     }
     private void ZoomMenu(){var m=BrowserContextMenu();foreach(int n in new[]{75,90,100,110,125,150}){int value=n;m.Items.Add(n+"%",null,(_,_)=>{if(Current?.Web!=null)Current.Web.ZoomFactor=value/100.0;});}m.Show(Cursor.Position);}
     private void SettingsDialog()=>OpenInternal("settings");
@@ -228,18 +259,87 @@ public sealed partial class BrowserForm
         protected override void OnPaint(PaintEventArgs e){var g=e.Graphics;g.Clear(Visual.Surface);hits.Clear();int x=17;foreach(var p in owner.state.Bookmarks.Take(10)){int w=Math.Min(165,TextRenderer.MeasureText(p.Title,Font).Width+32);if(x+w>Width-25)break;var icon=owner.pages.FirstOrDefault(t=>Policy.Host(t.Url)==Policy.Host(p.Url)&&t.Favicon!=null)?.Favicon;if(icon!=null)g.DrawImage(icon,new Rectangle(x,7,16,16));else Visual.Icon(g,"bookmark",new Rectangle(x,7,16,16),Visual.Muted);Visual.TextAt(g,p.Title,new Rectangle(x+23,2,w-26,26),8,Visual.Text);hits.Add((new Rectangle(x,0,w,Height),p.Url));x+=w+12;}if(owner.state.Bookmarks.Count==0)Visual.TextAt(g,"Your bookmarks appear here.  Bookmark a page with Ctrl+D.",new Rectangle(17,0,Width-35,Height),9,Visual.Muted);}
         protected override void OnMouseDown(MouseEventArgs e){foreach(var(r,url)in hits)if(r.Contains(e.Location)){if(e.Button==MouseButtons.Middle)owner.NewTab(url);else _=owner.Navigate(url);return;}}
     }
-    private sealed class StartPage:Control
+    private sealed class StartPage : Panel
     {
-        private readonly BrowserForm owner;private readonly BrowserTab page;private Rectangle search;private readonly List<(Rectangle R,string Url)> links=[];
-        public StartPage(BrowserForm o,BrowserTab p){owner=o;page=p;DoubleBuffered=true;AccessibleName="Aether new tab";Cursor=Cursors.Default;}
-        protected override void OnPaint(PaintEventArgs e){var g=e.Graphics;g.SmoothingMode=SmoothingMode.AntiAlias;using var gradient=new LinearGradientBrush(ClientRectangle,owner.state.DarkTheme?Color.FromArgb(33,27,57):Color.FromArgb(240,235,254),owner.state.DarkTheme?Color.FromArgb(16,19,33):Color.FromArgb(222,231,249),32);g.FillRectangle(gradient,ClientRectangle);links.Clear();int left=Math.Max(35,(Width-680)/2),w=Math.Min(680,Width-70),y=Math.Max(100,Height/4);
-            Visual.TextAt(g,"Aether One",new Rectangle(left,y-14,w,65),35,Visual.Text,true);Visual.TextAt(g,"A quieter way to explore.",new Rectangle(left+3,y+54,w,30),12,Visual.Muted);
-            search=new Rectangle(left,y+118,w,58);Visual.Round(g,search,Visual.Card,28);Visual.Icon(g,"search",new Rectangle(left+21,y+138,19,19),Visual.Muted);Visual.TextAt(g,"Search "+owner.state.SearchEngine+" or enter a web address",new Rectangle(left+56,y+126,w-80,42),11,Visual.Muted);
-            var sites=new[]{("Google","G","https://www.google.com/"),("YouTube","Y","https://www.youtube.com/"),("Wikipedia","W","https://www.wikipedia.org/"),("GitHub","GH","https://github.com/")};int start=left+(w-352)/2;
-            for(int i=0;i<4;i++){int x=start+i*88;var r=new Rectangle(x,y+207,80,87);Visual.Round(g,new Rectangle(x+15,y+208,48,48),Visual.Card,24);Visual.TextAt(g,sites[i].Item2,new Rectangle(x+17,y+215,44,33),15,Visual.Text,true);Visual.TextAt(g,sites[i].Item1,new Rectangle(x,y+265,80,20),9,Visual.Muted);links.Add((r,sites[i].Item3));}
-            Visual.TextAt(g,DateTime.Now.ToString("HH:mm"),new Rectangle(Width-170,35,140,60),32,Visual.Text);Visual.TextAt(g,"Make it yours  ·  Settings",new Rectangle(Width-230,Height-43,210,24),9,Visual.Muted);
+        private readonly BrowserForm owner;
+        private readonly BrowserTab page;
+        private readonly SoftPanel searchBox;
+        private readonly TextBox input;
+
+        public StartPage(BrowserForm owner, BrowserTab page)
+        {
+            this.owner = owner;
+            this.page = page;
+            DoubleBuffered = true;
+            ResizeRedraw = true;
+            AccessibleName = "Aether new tab";
+            searchBox = new SoftPanel { Height = 42, Radius = 14, Padding = new Padding(42, 10, 15, 0) };
+            var searchIcon = new ChromeButton
+            {
+                Glyph = "search", AccessibleName = "Submit search", Size = new Size(36, 36),
+                Location = new Point(4, 2), FlatStyle = FlatStyle.Flat, TabStop = false
+            };
+            searchIcon.Click += (_, _) => Submit();
+            input = new TextBox
+            {
+                PlaceholderText = "Search the web or enter an address", AccessibleName = "Search the web",
+                BorderStyle = BorderStyle.None, Dock = DockStyle.Fill, Font = new Font("Segoe UI", 11)
+            };
+            input.KeyDown += (_, e) =>
+            {
+                if (e.KeyCode != Keys.Enter) return;
+                e.SuppressKeyPress = true;
+                Submit();
+            };
+            searchBox.Controls.Add(input);
+            searchBox.Controls.Add(searchIcon);
+            Controls.Add(searchBox);
+            ApplyTheme();
         }
-        protected override void OnMouseDown(MouseEventArgs e){if(search.Contains(e.Location)){owner.address.Focus();owner.address.SelectAll();return;}foreach(var(r,url)in links)if(r.Contains(e.Location)){_=owner.Navigate(url,page);return;}if(e.Y>Height-50&&e.X>Width-250)owner.OpenInternal("settings/appearance");}
+
+        internal void ApplyTheme()
+        {
+            BackColor = Visual.Base;
+            searchBox.BackColor = Visual.Card;
+            input.BackColor = Visual.Card;
+            input.ForeColor = Visual.Text;
+            foreach (var button in searchBox.Controls.OfType<ChromeButton>())
+            {
+                button.BackColor = Visual.Card;
+                button.ForeColor = Visual.Muted;
+            }
+            Invalidate();
+        }
+
+        private void Submit()
+        {
+            string query = input.Text.Trim();
+            if (query.Length == 0) { input.Focus(); return; }
+            input.Clear();
+            _ = owner.Navigate(query, page);
+        }
+
+        protected override void OnLayout(LayoutEventArgs e)
+        {
+            base.OnLayout(e);
+            if (searchBox == null) return;
+            int width = Math.Clamp(ClientSize.Width - 80, 150, 650);
+            searchBox.SetBounds((Width - width) / 2, Math.Max(90, Height * 43 / 100), width, 42);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            var g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using var titleFont = new Font("Segoe UI", 26, FontStyle.Bold);
+            const string title = "Aether One";
+            var size = TextRenderer.MeasureText(title, titleFont);
+            int x = (Width - size.Width - 42) / 2;
+            int y = searchBox.Top - 82;
+            Visual.Icon(g, "brand", new Rectangle(x, y + 6, 33, 33), Visual.Mint);
+            TextRenderer.DrawText(g, title, titleFont, new Point(x + 42, y), Visual.Text);
+        }
     }
 }
 internal sealed class SoftPanel:Panel

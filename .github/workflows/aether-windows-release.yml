@@ -31,6 +31,20 @@ jobs:
           foreach ($file in @('AetherOne-Engine.png', 'interaction-tests.txt', 'article-rendering-tests.txt')) {
             if (-not (Test-Path (Join-Path $env:AETHER_SMOKE_OUTPUT $file))) { throw "Missing smoke evidence $file" }
           }
+      - name: Run startup, request and memory workloads
+        shell: pwsh
+        run: |
+          $env:AETHER_BENCHMARK = '1'
+          $env:AETHER_SMOKE_OUTPUT = Join-Path $env:GITHUB_WORKSPACE 'smoke-results/workloads'
+          $process = Start-Process (Resolve-Path publish/AetherOne.exe) -ArgumentList '--smoke-test' -PassThru
+          if (-not $process.WaitForExit(180000)) { $process.Kill(); throw 'Workloads timed out' }
+          if ($process.ExitCode -ne 0) {
+            Get-Content (Join-Path $env:AETHER_SMOKE_OUTPUT 'smoke-test.txt')
+            throw "Workloads exited with code $($process.ExitCode)"
+          }
+          foreach ($file in @('performance.json', 'memory-workload.json')) {
+            Get-Content (Join-Path $env:AETHER_SMOKE_OUTPUT $file)
+          }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
