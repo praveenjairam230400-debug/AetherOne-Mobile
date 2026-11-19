@@ -22,7 +22,7 @@ public sealed partial class BrowserForm : Form
     private readonly bool smoke;
     private double shownMs;
     private readonly NavigationDiagnostics navigationDiagnostics = new();
-    private static readonly HashSet<Keys> BrowserShortcuts = new() { Keys.Control|Keys.K, Keys.Control|Keys.N, Keys.Control|Keys.L, Keys.Control|Keys.T, Keys.Control|Keys.W, Keys.Control|Keys.D, Keys.Control|Keys.B, Keys.Control|Keys.H, Keys.Control|Keys.J, Keys.Control|Keys.F, Keys.Control|Keys.R, Keys.Control|Keys.P, Keys.Control|Keys.Shift|Keys.T, Keys.Control|Keys.Shift|Keys.N, Keys.Control|Keys.Tab, Keys.Control|Keys.Shift|Keys.Tab, Keys.Alt|Keys.Left, Keys.Alt|Keys.Right, Keys.F5 };
+    private static readonly HashSet<Keys> BrowserShortcuts = new() { Keys.Control|Keys.K, Keys.Control|Keys.N, Keys.Control|Keys.L, Keys.Control|Keys.T, Keys.Control|Keys.W, Keys.Control|Keys.D, Keys.Control|Keys.B, Keys.Control|Keys.H, Keys.Control|Keys.J, Keys.Control|Keys.F, Keys.Control|Keys.R, Keys.Control|Keys.P, Keys.Control|Keys.Shift|Keys.T, Keys.Control|Keys.Shift|Keys.N, Keys.Control|Keys.Shift|Keys.Escape, Keys.Control|Keys.Tab, Keys.Control|Keys.Shift|Keys.Tab, Keys.Alt|Keys.Left, Keys.Alt|Keys.Right, Keys.F5 };
     private readonly List<BrowserTab> pages = [];
     private Button back = null!, forward = null!, reload = null!, shield = null!;
     private BrowserTab? Current => tabs.SelectedTab?.Tag as BrowserTab;
@@ -78,6 +78,8 @@ public sealed partial class BrowserForm : Form
         StartPosition = FormStartPosition.CenterScreen; BackColor = bg; ForeColor = ink; Font = new Font("Segoe UI", 10);
         Icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
         BuildWorkspaceUi();
+        KeyPreview = true;
+        KeyDown += (_, e) => { if (e.KeyData == (Keys.Control | Keys.Shift | Keys.Escape)) { e.Handled = true; e.SuppressKeyPress = true; ShowAetherTaskManager(); } };
         memoryTimer.Tick+=async(_,_)=>await ReclaimInactive();if(!smoke)memoryTimer.Start();
         tabs.BeforeSelectionChanged+=(_,_)=>{if(Current?.Web is {IsDisposed:false} w)w.Visible=false;DismissPopups();};
         Deactivate+=(_,_)=>DismissPopups();
@@ -167,6 +169,7 @@ public sealed partial class BrowserForm : Form
             if (smoke && Directory.Exists(Path.Combine(profilePath, "Fixtures"))) core.SetVirtualHostNameToFolderMapping("aether.test", Path.Combine(profilePath, "Fixtures"), CoreWebView2HostResourceAccessKind.DenyCors);
             web.KeyDown += (_, e) => {
                 var key = e.KeyData;
+                if (key == (Keys.Control | Keys.Shift | Keys.Escape)) { e.Handled = true; e.SuppressKeyPress = true; BeginInvoke((Action)ShowAetherTaskManager); return; }
                 if (BrowserShortcuts.Contains(key)) {
                     e.Handled = true; e.SuppressKeyPress = true; BeginInvoke((Action)(() => { if (!closing) HandleShortcut(key); }));
                 }
