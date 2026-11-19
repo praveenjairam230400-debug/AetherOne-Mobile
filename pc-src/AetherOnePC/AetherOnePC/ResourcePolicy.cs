@@ -12,8 +12,16 @@ internal static class ResourcePolicy
     internal static TimeSpan LongIdle(string? mode)=>
         TimeSpan.FromMinutes(Mode(mode)=="Performance"?10:Mode(mode)=="Memory saver"?2:3);
     internal static bool Eligible(TimeSpan idle,bool pressure)=>idle>=MinimumIdle(pressure,"Adaptive");
-    internal static bool CanReclaimNow(bool pressure,bool activeLoading,TimeSpan sinceActivation,double cpuFraction)=>
-        pressure||(!activeLoading&&sinceActivation>=TimeSpan.FromSeconds(3)&&cpuFraction<0.35);
+    // Avoid costly WebView disposal/checkpoint work while a foreground page is loading,
+    // or immediately after the user switches tabs, even under memory pressure.
+    // Pressure shortens the grace period but does not override foreground protection.
+    internal static bool CanReclaimNow(bool pressure,bool activeLoading,TimeSpan sinceActivation,double cpuFraction)
+    {
+        if(activeLoading)return false;
+        if(sinceActivation<TimeSpan.FromSeconds(pressure?1:3))return false;
+        if(double.IsNaN(cpuFraction)||double.IsInfinity(cpuFraction))return false;
+        return cpuFraction<(pressure?0.70:0.35);
+    }
     internal static int MaxReleasesPerScan(bool pressure,string? mode)=>
         pressure?3:Mode(mode)=="Memory saver"?2:1;
 }
