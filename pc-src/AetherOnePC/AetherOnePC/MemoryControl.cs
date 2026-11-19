@@ -10,25 +10,51 @@ public sealed partial class BrowserForm
     private readonly System.Windows.Forms.Timer memoryTimer=new(){Interval=10000};
     private bool reclaiming;
     private DateTime lastActivation = DateTime.UtcNow;
-    private DateTime lastCpuSampleAt = DateTime.MinValue;
-    private TimeSpan lastCpuTotal;
+    private long lastCpuSample;
+    private Dictionary<int, TimeSpan> previousProcessTimes = [];
     private double browserCpuFraction;
     private int optimizationScans, optimizationReleased;
-    private double SampleBrowserCpu()
+    private async Task<(double Cpu, long PrivateBytes)> SampleBrowserResources()
     {
-        TimeSpan total=TimeSpan.Zero;
-        var ids=new HashSet<int>{Environment.ProcessId};
-        try{if(environment?.IsCompletedSuccessfully==true)foreach(var item in environment.Result.GetProcessInfos())ids.Add(item.ProcessId);}catch{}
-        foreach(int id in ids)try{using var process=Process.GetProcessById(id);total+=process.TotalProcessorTime;}catch{}
-        var now=DateTime.UtcNow;
-        if(lastCpuSampleAt!=DateTime.MinValue)
+        var ids = new HashSet<int> { Environment.ProcessId };
+        try
         {
-            double seconds=(now-lastCpuSampleAt).TotalSeconds;
-            if(seconds>0.25)
-                browserCpuFraction=Math.Clamp((total-lastCpuTotal).TotalSeconds/(seconds*Math.Max(1,Environment.ProcessorCount)),0,1);
+            if (environment?.IsCompletedSuccessfully == true)
+                foreach (var item in environment.Result.GetProcessInfos()) ids.Add(item.ProcessId);
         }
-        lastCpuTotal=total;lastCpuSampleAt=now;
-        return browserCpuFraction;
+        catch (COMException) { }
+
+        var sample = await Task.Run(() =>
+        {
+            var times = new Dictionary<int, TimeSpan>();
+            long bytes = 0;
+            foreach (int id in ids)
+            {
+                try
+                {
+                    using var process = Process.GetProcessById(id);
+                    times[id] = process.TotalProcessorTime;
+                    bytes += process.PrivateMemorySize64;
+                }
+                catch (ArgumentException) { }
+                catch (InvalidOperationException) { }
+                catch (System.ComponentModel.Win32Exception) { }
+            }
+            return (Times: times, PrivateBytes: bytes, Timestamp: Stopwatch.GetTimestamp());
+        });
+        if (lastCpuSample != 0)
+        {
+            double elapsed = Stopwatch.GetElapsedTime(lastCpuSample, sample.Timestamp).TotalSeconds;
+            double cpuSeconds = 0;
+            foreach (var pair in sample.Times)
+                if (previousProcessTimes.TryGetValue(pair.Key, out var previous))
+                    cpuSeconds += Math.Max(0, (pair.Value - previous).TotalSeconds);
+            if (elapsed > 0.25)
+                browserCpuFraction = Math.Clamp(cpuSeconds / (elapsed * Environment.ProcessorCount), 0, 1);
+        }
+        previousProcessTimes = sample.Times;
+        lastCpuSample = sample.Timestamp;
+        return (browserCpuFraction, sample.PrivateBytes);
     }
     private long memoryBudget=512*ResourcePolicy.MiB;
     private string memoryDecision="Waiting for first memory sample";
@@ -40,7 +66,7 @@ public sealed partial class BrowserForm
     private long KnownPrivateBytes(){long bytes=0;var ids=new HashSet<int>{Environment.ProcessId};try{if(environment?.IsCompletedSuccessfully==true)foreach(var i in environment.Result.GetProcessInfos())ids.Add(i.ProcessId);}catch{}foreach(int id in ids)try{using var process=Process.GetProcessById(id);bytes+=process.PrivateMemorySize64;}catch{}return bytes;}
     private bool EligibleForRelease(BrowserTab p)=>pages.Contains(p)&&p!=Current&&!p.Pinned&&!p.Loading&&!p.Audible&&p.Web is {IsDisposed:false}&&p.Web.CoreWebView2!=null&&p.InternalKey.Length==0&&IsWeb(p.Url)&&!DownloadActive;
     private static async Task<bool> SaveCheckpoint(BrowserTab p){var web=p.Web;string url=p.Url;if(web?.CoreWebView2==null)return false;try{using var value=JsonDocument.Parse(await web.CoreWebView2.ExecuteScriptAsync("JSON.stringify({url:location.href,x:scrollX,y:scrollY})"));using var data=JsonDocument.Parse(value.RootElement.GetString()??"{}");if(p.Web!=web||p.Url!=url||data.RootElement.GetProperty("url").GetString()!=url)return false;p.SavedScrollX=data.RootElement.GetProperty("x").GetDouble();p.SavedScrollY=data.RootElement.GetProperty("y").GetDouble();p.SavedZoom=web.ZoomFactor;p.CheckpointUrl=url;return true;}catch{return false;}}
-    private async Task RestoreCheckpoint(BrowserTab p){var web=p.Web;string url=p.CheckpointUrl;if(!p.MemoryCheckpointPending||web?.CoreWebView2==null)return;p.MemoryCheckpointPending=false;if(url.Length==0||p.Url!=url){p.CheckpointUrl="";return;}double x=p.SavedScrollX,y=p.SavedScrollY,zoom=p.SavedZoom;p.CheckpointUrl="";try{web.ZoomFactor=zoom;string script="if(location.href==="+JsonSerializer.Serialize(url)+")scrollTo("+JsonSerializer.Serialize(x)+","+JsonSerializer.Serialize(y)+")";await web.CoreWebView2.ExecuteScriptAsync(script);}catch{}}
+    private async Task RestoreCheckpoint(BrowserTab p){var web=p.Web;string url=p.CheckpointUrl;if(!p.MemoryCheckpointPending||web?.CoreWebView2==null)return;p.MemoryCheckpointPending=false;if(url.Length==0||p.Url!=url){p.CheckpointUrl="";return;}double x=p.SavedScrollX,y=p.SavedScrollY,zoom=p.SavedZoom;p.CheckpointUrl="";try{web.ZoomFactor=zoom;string script="if(location.href==="+JsonSerializer.Serialize(url)+")scrollTo({left:"+JsonSerializer.Serialize(x)+",top:"+JsonSerializer.Serialize(y)+",behavior:\"instant\"})";await web.CoreWebView2.ExecuteScriptAsync(script);}catch{}}
 
     private bool DownloadActive=>downloadEntries.Any(x=>x.Operation.State==CoreWebView2DownloadState.InProgress);
     private async Task SuspendHiddenAsync(BrowserTab p)
@@ -79,7 +105,8 @@ public sealed partial class BrowserForm
             bool pressure=available&&ResourcePolicy.Pressure((long)system.AvailablePhysical,(long)system.TotalPhysical);
             memoryBudget=measurement?256*ResourcePolicy.MiB:
                 ResourcePolicy.Budget(available?(long)system.TotalPhysical:8L*1024*ResourcePolicy.MiB,pressure);
-            double cpu=SampleBrowserCpu();
+            var (cpu, usage) = await SampleBrowserResources();
+            if (closing || !state.MemorySaver || DownloadActive) return;
 
             // Prioritize visible interaction, animation, and navigation before reclamation.
             // Never change OS process priority or trim a live renderer's working set.
@@ -95,7 +122,6 @@ public sealed partial class BrowserForm
                     &&!(p==Current&&p.InternalKey=="extensions")&&!installingExtension)
                     ReleaseView(p);
 
-            long usage=KnownPrivateBytes();
             bool over=ResourcePolicy.NeedsReclaim(usage,memoryBudget);
             var now=DateTime.UtcNow;
             var candidates=pages.Where(EligibleForRelease)
@@ -113,7 +139,11 @@ public sealed partial class BrowserForm
                 if(!measurement&&!(over&&usage>memoryBudget*9/10)&&!longIdle)continue;
 
                 await Task.Yield();
-                if(closing||p==Current||(Current?.Loading==true&&!pressure))break;
+                if (closing || !state.MemorySaver || (!measurement &&
+                    !ResourcePolicy.CanReclaimNow(pressure, Current?.Loading == true, DateTime.UtcNow - lastActivation, cpu))) break;
+                if (!EligibleForRelease(p)) continue;
+                var inspectedView = p.Web;
+                var inspectedNavigation = p.ActiveNavigationId;
                 p.MemoryReason="Checking safe background state";
                 if(await HasUnsavedInput(p))
                 {
@@ -128,14 +158,16 @@ public sealed partial class BrowserForm
                     _=SuspendHiddenAsync(p);
                     continue;
                 }
-                if(!EligibleForRelease(p)||DateTime.UtcNow-p.LastActive<ResourcePolicy.MinimumIdle(pressure,mode))
+                if (!state.MemorySaver || !EligibleForRelease(p) || p.Web != inspectedView ||
+                    p.ActiveNavigationId != inspectedNavigation ||
+                    DateTime.UtcNow - p.LastActive < ResourcePolicy.MinimumIdle(pressure, mode))
                     continue;
                 p.MemoryCheckpointPending=true;
                 ReleaseView(p);
                 p.MemoryReason="Unloaded: reloads on selection";
                 released++;optimizationReleased++;
-                usage=KnownPrivateBytes();
-                if(!measurement&&usage<memoryBudget*9/10)break;
+                // Renderer exit is asynchronous. Resample on the next scan.
+                if (!measurement && !pressure) break;
             }
             memoryDecision=$"{mode} · browser CPU {cpu:P0} · known private {usage/ResourcePolicy.MiB} MiB · soft budget {memoryBudget/ResourcePolicy.MiB} MiB · released {released}, protected {retained} (total {optimizationReleased})";
             RefreshSurfaces();

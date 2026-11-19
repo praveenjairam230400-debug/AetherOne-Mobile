@@ -16,8 +16,27 @@ jobs:
         run: dotnet restore pc-src/AetherOnePC/AetherOnePC/AetherOnePC.csproj
       - name: Compile
         run: dotnet build pc-src/AetherOnePC/AetherOnePC/AetherOnePC.csproj -c Release --no-restore
+      - name: Run policy tests
+        run: dotnet run --project pc-src/AetherOnePC/PolicyTests/PolicyTests.csproj -c Release
       - name: Publish Windows x64
         run: dotnet publish pc-src/AetherOnePC/AetherOnePC/AetherOnePC.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o publish
+      - name: Run Windows WebView2 smoke checks
+        shell: pwsh
+        run: |
+          $env:AETHER_SMOKE_OUTPUT = Join-Path $env:GITHUB_WORKSPACE 'smoke-results'
+          $process = Start-Process (Resolve-Path publish/AetherOne.exe) -ArgumentList '--smoke-test' -PassThru
+          if (-not $process.WaitForExit(180000)) { $process.Kill(); throw 'Smoke test timed out' }
+          Get-Content (Join-Path $env:AETHER_SMOKE_OUTPUT 'smoke-test.txt')
+          if ($process.ExitCode -ne 0) { throw "Smoke test exited with code $($process.ExitCode)" }
+          foreach ($file in @('AetherOne-Engine.png', 'interaction-tests.txt', 'article-rendering-tests.txt')) {
+            if (-not (Test-Path (Join-Path $env:AETHER_SMOKE_OUTPUT $file))) { throw "Missing smoke evidence $file" }
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AetherOne-Windows-Validation
+          path: smoke-results
+          if-no-files-found: ignore
       - name: Package
         shell: pwsh
         run: Compress-Archive -Path publish/* -DestinationPath AetherOne-Windows-x64.zip -Force

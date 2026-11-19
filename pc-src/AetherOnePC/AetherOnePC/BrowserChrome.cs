@@ -6,7 +6,6 @@ namespace AetherOnePC;
 public sealed partial class BrowserForm
 {
     private string FaviconPath(string url)=>Path.Combine(profilePath,"Favicons",Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Policy.Host(url))))+".png");
-    private Bitmap? LoadCachedFavicon(string url){try{using var original=Image.FromFile(FaviconPath(url));return new Bitmap(original,16,16);}catch{return null;}}
     private void CacheFavicon(string url,Bitmap icon){if(!IsWeb(url))return;try{using var memory=new MemoryStream();icon.Save(memory,System.Drawing.Imaging.ImageFormat.Png);var bytes=memory.ToArray();var path=FaviconPath(url);_=Task.Run(()=>{try{Directory.CreateDirectory(Path.GetDirectoryName(path)!);if(File.Exists(path)||Directory.EnumerateFiles(Path.GetDirectoryName(path)!,"*.png").Take(257).Count()<256)File.WriteAllBytes(path,bytes);}catch{}});}catch{}}
     private HorizontalTabs? horizontalTabs;
     private FavoritesBar? favorites;
@@ -22,24 +21,21 @@ public sealed partial class BrowserForm
     private string predictionQuery="";
     private static readonly HttpClient network=new(){Timeout=Timeout.InfiniteTimeSpan};
     private sealed record Suggestion(string Title,string Detail,string Value,BrowserTab? Tab=null);
-    [DllImport("user32.dll")]private static extern bool ReleaseCapture();
-    [DllImport("user32.dll")]private static extern IntPtr SendMessage(IntPtr hwnd,int msg,IntPtr w,IntPtr l);
-    protected override void WndProc(ref Message m){if(m.Msg==0x84&&WindowState!=FormWindowState.Maximized){long v=m.LParam.ToInt64();var p=PointToClient(new Point((short)v,(short)(v>>16)));bool l=p.X<6,r=p.X>=ClientSize.Width-6,t=p.Y<6,b=p.Y>=ClientSize.Height-6;if(l||r||t||b){m.Result=(IntPtr)(t?(l?13:r?14:12):b?(l?16:r?17:15):l?10:11);return;}}base.WndProc(ref m);}
     private void BuildBrowserChrome()
     {
         Visual.SetTheme(state.DarkTheme);bg=Visual.Base;panel=Visual.Surface;ink=Visual.Text;mint=Visual.Mint;
-        FormBorderStyle=FormBorderStyle.None;MaximizedBounds=Screen.FromControl(this).WorkingArea;BackColor=Visual.Base;MinimumSize=new Size(860,560);
+        FormBorderStyle=FormBorderStyle.Sizable;BackColor=Visual.Base;MinimumSize=new Size(860,560);
         var root=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=1,RowCount=5,BackColor=Visual.Base,Padding=Padding.Empty,Margin=Padding.Empty};
-        foreach(var height in new[]{40,48,state.ShowFavorites?30:0})root.RowStyles.Add(new RowStyle(SizeType.Absolute,height));root.RowStyles.Add(new RowStyle(SizeType.Percent,100));root.RowStyles.Add(new RowStyle(SizeType.Absolute,2));Controls.Add(root);
+        foreach(var height in new[]{43,45,state.ShowFavorites?30:0})root.RowStyles.Add(new RowStyle(SizeType.Absolute,height));root.RowStyles.Add(new RowStyle(SizeType.Percent,100));root.RowStyles.Add(new RowStyle(SizeType.Absolute,2));Controls.Add(root);
         horizontalTabs=new HorizontalTabs(this){Dock=DockStyle.Fill,Margin=Padding.Empty};root.Controls.Add(horizontalTabs,0,0);
         var bar=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=11,RowCount=1,Padding=new Padding(8,5,8,5),BackColor=Visual.Surface,Margin=Padding.Empty};browserToolbar=bar;bar.RowStyles.Add(new RowStyle(SizeType.Percent,100));
         for(int i=0;i<11;i++)bar.ColumnStyles.Add(new ColumnStyle(i==4?SizeType.Percent:SizeType.Absolute,i==4?100:i==8?0:36));
         Button Tool(string icon,string name,Action action){var b=(ChromeButton)Button("",name,action);b.Glyph=icon;b.Margin=Padding.Empty;b.BackColor=Visual.Surface;return b;}
         back=Tool("back","Back · Alt+Left",()=>{if(Current?.Web?.CanGoBack==true)Current.Web.GoBack();});forward=Tool("forward","Forward · Alt+Right",()=>{if(Current?.Web?.CanGoForward==true)Current.Web.GoForward();});reload=Tool("reload","Reload · Ctrl+R",Reload);homeButton=Tool("home","Home",Home);
         bar.Controls.Add(back,0,0);bar.Controls.Add(forward,1,0);bar.Controls.Add(reload,2,0);bar.Controls.Add(homeButton,3,0);bar.ColumnStyles[3].Width=state.ShowHome?36:0;
-        var omnibox=new SoftPanel{Dock=DockStyle.Fill,BackColor=Visual.Card,Radius=19,Padding=new Padding(15,10,48,7),Margin=new Padding(6,0,9,0)};
+        var omnibox=new SoftPanel{Dock=DockStyle.Fill,BackColor=Visual.Card,Radius=10,Padding=new Padding(15,8,48,6),Margin=new Padding(6,0,9,0)};
         address.Font=new Font("Segoe UI",10);address.BackColor=Visual.Card;address.ForeColor=Visual.Text;address.PlaceholderText="Search "+state.SearchEngine+" or enter address";omnibox.Controls.Add(address);omnibox.Click+=(_,_)=>{address.Focus();address.SelectAll();};
-        var save=Tool("bookmark","Bookmark this tab · Ctrl+D",BookmarkWithFeedback);bookmarkButton=(ChromeButton)save;save.Dock=DockStyle.None;save.Size=new Size(32,32);save.Anchor=AnchorStyles.Right|AnchorStyles.Top;save.BackColor=Visual.Card;omnibox.Controls.Add(save);omnibox.Resize+=(_,_)=>save.Location=new Point(omnibox.Width-38,3);bar.Controls.Add(omnibox,4,0);
+        var save=Tool("bookmark","Bookmark this tab · Ctrl+D",BookmarkWithFeedback);bookmarkButton=(ChromeButton)save;save.Dock=DockStyle.None;save.Size=new Size(32,32);save.Anchor=AnchorStyles.Right|AnchorStyles.Top;save.BackColor=Visual.Card;omnibox.Controls.Add(save);omnibox.Resize+=(_,_)=>save.Location=new Point(omnibox.Width-38,1);bar.Controls.Add(omnibox,4,0);
         shield=Tool("shield","Shields · site controls",()=>OpenInternal("settings/site"));shield.ForeColor=Visual.Mint;bar.Controls.Add(shield,5,0);
         bar.Controls.Add(Tool("extensions","Extensions",()=>OpenInternal("extensions")),6,0);bar.Controls.Add(Tool("download","Downloads · Ctrl+J",()=>OpenInternal("downloads")),7,0);
         extensionPins=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false,Margin=Padding.Empty,BackColor=Visual.Surface};bar.Controls.Add(extensionPins,8,0);
@@ -103,28 +99,128 @@ public sealed partial class BrowserForm
     }
     private sealed class HorizontalTabs:Control
     {
+        private int wheelRemainder;
         private readonly BrowserForm owner;internal readonly List<(Rectangle Rect,BrowserTab Page)> hits=[];private readonly Dictionary<BrowserTab,Rectangle> closeHits=[];private BrowserTab? hotClose;private int first;private int? closeWidth;private int currentWidth;private Rectangle plus;private readonly ToolTip tip=new();private BrowserTab? hovered;private BrowserTab? dragging;private Point dragStart;private bool moved;
-        public HorizontalTabs(BrowserForm o){owner=o;DoubleBuffered=true;BackColor=Visual.Base;AccessibleName="Browser tabs";}
+        public HorizontalTabs(BrowserForm o){owner=o;DoubleBuffered=true;ResizeRedraw=true;BackColor=Visual.Base;AccessibleName="Browser tabs";}
+        private bool revealSelection = true;
+        private Rectangle tabList;
+
+        internal void RevealSelection()
+        {
+            revealSelection = true;
+            Invalidate();
+        }
+
         protected override void OnPaint(PaintEventArgs e)
         {
-            var g=e.Graphics;g.SmoothingMode=SmoothingMode.AntiAlias;g.Clear(Visual.Base);hits.Clear();closeHits.Clear();
-            var all=owner.VisualTabs();int available=Math.Max(120,Width-195),tw=closeWidth??Math.Clamp(available/Math.Max(1,all.Length),48,236),slots=Math.Max(1,available/tw),active=Array.IndexOf(all,owner.Current);if(active<first)first=Math.Max(0,active);if(active>=first+slots)first=active-slots+1;first=Math.Clamp(first,0,Math.Max(0,all.Length-slots));
-            currentWidth=tw;int x=8;foreach(var p in all.Skip(first).Take(slots)){var r=new Rectangle(x,5,tw-4,35);bool current=p==owner.Current;if(current||p==hovered)Visual.Round(g,r,current?Visual.Surface:Visual.Hover,10);
-                if(p.Favicon!=null&&!p.AtHome&&p.InternalKey.Length==0)g.DrawImage(p.Favicon,new Rectangle(x+12,15,16,16));else Visual.Icon(g,p.AtHome?"brand":p.InternalKey.Length>0?"settings":"clock",new Rectangle(x+12,14,17,17),Visual.Muted);
-                if(tw>=76)Visual.TextAt(g,p.AtHome?"New tab":p.Title,new Rectangle(x+33,8,Math.Max(0,tw-72),30),9,Visual.Text);if(p.Audible)Visual.TextAt(g,"♪",new Rectangle(r.Right-40,9,16,28),10,Visual.Mint);
-                var close=new Rectangle(r.Right-25,10,22,24);closeHits[p]=close;if(p==hotClose)Visual.Round(g,close,Visual.Hover,12);Visual.Icon(g,"close",new Rectangle(close.X+7,close.Y+7,10,10),p==hotClose?Visual.Text:Visual.Muted);hits.Add((r,p));x+=tw;}
-            plus=new Rectangle(Math.Min(x+3,Width-178),7,30,30);Visual.Icon(g,"plus",new Rectangle(plus.X+7,plus.Y+7,16,16),Visual.Muted);
-            using var pen=new Pen(Visual.Text);g.DrawLine(pen,Width-120,20,Width-110,20);g.DrawRectangle(pen,Width-78,15,9,9);Visual.Icon(g,"close",new Rectangle(Width-39,12,16,16),Visual.Text);
+            var g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.Clear(Visual.Base);
+            hits.Clear();
+            closeHits.Clear();
+
+            var all = owner.VisualTabs();
+            int available = Math.Max(80, Width - 104);
+            int width = closeWidth ?? Math.Clamp(available / Math.Max(1, all.Length), 98, 214);
+            int slots = Math.Max(1, available / width);
+            int active = Array.IndexOf(all, owner.Current);
+            if (revealSelection && active >= 0)
+            {
+                if (active < first) first = active;
+                if (active >= first + slots) first = active - slots + 1;
+                revealSelection = false;
+            }
+            first = Math.Clamp(first, 0, Math.Max(0, all.Length - slots));
+            currentWidth = width;
+
+            tabList = new Rectangle(6, 7, 30, 30);
+            Visual.Icon(g, "menu", new Rectangle(13, 14, 16, 16), Visual.Muted);
+            int x = 42;
+            foreach (var p in all.Skip(first).Take(slots))
+            {
+                var rect = new Rectangle(x, 4, width - 4, Height - 7);
+                bool current = p == owner.Current;
+                if (current || p == hovered)
+                    Visual.Round(g, rect, current ? Visual.Surface : Visual.Hover, 9);
+                if (current)
+                {
+                    using var accent = new SolidBrush(Visual.Mint);
+                    g.FillRectangle(accent, rect.Left + 10, rect.Bottom - 2, rect.Width - 20, 2);
+                }
+                if (p.Favicon != null && !p.AtHome && p.InternalKey.Length == 0)
+                    g.DrawImage(p.Favicon, new Rectangle(x + 10, 14, 16, 16));
+                else
+                    Visual.Icon(g, p.AtHome ? "brand" : p.InternalKey.Length > 0 ? "settings" : "clock",
+                        new Rectangle(x + 10, 13, 17, 17), Visual.Muted);
+
+                string title = p.AtHome ? "New tab" : p.Title;
+                if (p.Pinned) title = "• " + title;
+                string stateIndicator = p.Audible ? "♪" : p.Sleeping ? "◌" : "";
+                int indicatorWidth = stateIndicator.Length == 0 ? 0 : 17;
+                Visual.TextAt(g, title, new Rectangle(x + 33, 7, width - 67 - indicatorWidth, 30), 9, Visual.Text);
+                if (indicatorWidth > 0)
+                    Visual.TextAt(g, stateIndicator, new Rectangle(rect.Right - 44, 7, 17, 30), 9, Visual.Mint);
+
+                var close = new Rectangle(rect.Right - 25, 10, 22, 24);
+                closeHits[p] = close;
+                if (p == hotClose) Visual.Round(g, close, Visual.Hover, 8);
+                Visual.Icon(g, "close", new Rectangle(close.X + 7, close.Y + 7, 10, 10), Visual.Muted);
+                hits.Add((rect, p));
+                x += width;
+            }
+            plus = new Rectangle(x + 3, 7, 30, 30);
+            Visual.Icon(g, "plus", new Rectangle(plus.X + 7, plus.Y + 7, 16, 16), Visual.Muted);
         }
-        internal void TestClick(Point point)=>OnMouseDown(new MouseEventArgs(MouseButtons.Left,1,point.X,point.Y,0));
-        protected override void OnMouseDown(MouseEventArgs e){Refresh();base.OnMouseDown(e);if(e.X>Width-48){owner.Close();return;}if(e.X>Width-94){owner.WindowState=owner.WindowState==FormWindowState.Maximized?FormWindowState.Normal:FormWindowState.Maximized;return;}if(e.X>Width-140){owner.WindowState=FormWindowState.Minimized;return;}foreach(var(r,p)in hits)if(r.Contains(e.Location)){if(e.Button==MouseButtons.Right)owner.TabMenu(p);else if(e.Button==MouseButtons.Middle||e.Button==MouseButtons.Left&&closeHits.TryGetValue(p,out var close)&&close.Contains(e.Location)){closeWidth=currentWidth;owner.CloseTab(p);}else {owner.SelectPage(p);if(e.Button==MouseButtons.Left){dragging=p;dragStart=e.Location;moved=false;Capture=true;}}return;}if(plus.Contains(e.Location)){owner.NewTab();return;}if(e.Clicks==2){owner.WindowState=owner.WindowState==FormWindowState.Maximized?FormWindowState.Normal:FormWindowState.Maximized;return;}ReleaseCapture();SendMessage(owner.Handle,0xA1,(IntPtr)2,IntPtr.Zero);}
+
+        internal void TestClick(Point point) => OnMouseDown(new MouseEventArgs(MouseButtons.Left, 1, point.X, point.Y, 0));
+        internal void TestWheel(int delta) => OnMouseWheel(new MouseEventArgs(MouseButtons.None, 0, 0, 0, delta));
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (tabList.Contains(e.Location) && e.Button == MouseButtons.Left)
+            {
+                owner.TabSearchMenu();
+                return;
+            }
+            foreach (var (rect, page) in hits)
+            {
+                if (!rect.Contains(e.Location)) continue;
+                if (e.Button == MouseButtons.Right) owner.TabMenu(page);
+                if (e.Button == MouseButtons.Middle ||
+                    e.Button == MouseButtons.Left && closeHits[page].Contains(e.Location))
+                {
+                    closeWidth = currentWidth;
+                    owner.CloseTab(page);
+                }
+                else if (e.Button == MouseButtons.Left)
+                {
+                    owner.SelectPage(page);
+                    dragging = page;
+                    dragStart = e.Location;
+                    moved = false;
+                    Capture = true;
+                }
+                return;
+            }
+            if (e.Button == MouseButtons.Left && plus.Contains(e.Location)) owner.NewTab();
+        }
         protected override void OnMouseMove(MouseEventArgs e){if(dragging!=null && e.Button==MouseButtons.Left){if(Math.Abs(e.X-dragStart.X)>8||Math.Abs(e.Y-dragStart.Y)>8)moved=true;if(moved){var landing=hits.FirstOrDefault(h=>h.Rect.Contains(e.Location)).Page;if(landing!=null&&landing!=dragging&&landing.Pinned==dragging.Pinned){owner.ReorderTab(dragging,landing);Invalidate();}}}var p=hits.FirstOrDefault(h=>h.Rect.Contains(e.Location)).Page;var close=p!=null&&closeHits.TryGetValue(p,out var rect)&&rect.Contains(e.Location)?p:null;if(close!=hotClose){hotClose=close;Invalidate();}if(p!=hovered){hovered=p;tip.SetToolTip(this,p==null?"":p.Title+"\n"+p.Url+(p.Sleeping?"\nSleeping · reloads on selection":p.Suspended?"\nSuspended · page state retained":""));Invalidate();}base.OnMouseMove(e);}
         protected override void OnMouseUp(MouseEventArgs e){if(dragging!=null){var tab=dragging;bool detach=moved&&(e.Y< -30||e.Y>Height+40);dragging=null;moved=false;Capture=false;if(detach)owner.DetachTab(tab);}base.OnMouseUp(e);}
         protected override void OnMouseLeave(EventArgs e){hovered=null;hotClose=null;closeWidth=null;Invalidate();base.OnMouseLeave(e);}
-        protected override void OnMouseWheel(MouseEventArgs e){first=Math.Max(0,first-(e.Delta>0?1:-1));Invalidate();}
+        protected override void OnMouseWheel(MouseEventArgs e)
+        {
+            wheelRemainder += e.Delta;
+            int steps = wheelRemainder / 120;
+            wheelRemainder %= 120;
+            if (steps == 0) return;
+            revealSelection = false;
+            first = Math.Max(0, first - steps);
+            Invalidate();
+        }
         protected override void Dispose(bool disposing){if(disposing)tip.Dispose();base.Dispose(disposing);}
     }
-    private void TabSearchMenu(){var m=BrowserContextMenu();foreach(var p in pages){var tab=p;m.Items.Add(p.AtHome?"New tab":p.Title,null,(_,_)=>SelectPage(tab));}m.Show(this,new Point(5,40));}
+    private void TabSearchMenu(){var m=BrowserContextMenu();foreach(var p in pages){var tab=p;m.Items.Add(p.AtHome?"New tab":p.Title,null,(_,_)=>SelectPage(tab));}m.Show(horizontalTabs!,new Point(5,horizontalTabs!.Height));}
     private sealed class FavoritesBar:Control
     {
         private readonly BrowserForm owner;private readonly List<(Rectangle R,string Url)> hits=[];

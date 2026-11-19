@@ -29,9 +29,14 @@ public sealed partial class BrowserForm : Form
     private sealed class BrowserTab
     {
         public Panel Container = null!;
-        public Panel Home = null!;
+        private Panel? home;
+        public Panel Home => home ??= BuildHome();
+        public Func<Panel> BuildHome = null!;
+        public void HideHome() { if (home != null) home.Visible = false; }
         public WebView2? Web;
         public Task? Initialization;
+        public int NavigationIntent;
+        public ulong? ActiveNavigationId;
         public string Url = "";
         public string Title = "New tab";
         public Bitmap? Favicon;
@@ -77,7 +82,7 @@ public sealed partial class BrowserForm : Form
         Size = new Size(Math.Min(1320, Screen.PrimaryScreen!.WorkingArea.Width - 24), Math.Min(860, Screen.PrimaryScreen.WorkingArea.Height - 24));
         StartPosition = FormStartPosition.CenterScreen; BackColor = bg; ForeColor = ink; Font = new Font("Segoe UI", 10);
         Icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
-        HandleCreated += (_, _) => AetherWindowChrome.Apply(Handle);
+        HandleCreated += (_, _) => AetherWindowChrome.Apply(Handle,state.DarkTheme);
         BuildWorkspaceUi();
         KeyPreview = true;
         KeyDown += (_, e) => { if (e.KeyData == (Keys.Control | Keys.Shift | Keys.Escape)) { e.Handled = true; e.SuppressKeyPress = true; ShowAetherTaskManager(); } };
@@ -85,7 +90,7 @@ public sealed partial class BrowserForm : Form
         tabs.BeforeSelectionChanged+=(_,_)=>{if(Current?.Web is {IsDisposed:false} w)w.Visible=false;DismissPopups();};
         Deactivate+=(_,_)=>DismissPopups();
         tabs.SelectedIndexChanged += (_, _) => {
-            var previous=lastSelected;if(previous!=null)previous.LastActive=DateTime.UtcNow;lastSelected=Current;if(Current!=null){Current.LastActive=DateTime.UtcNow;Current.Visits++;}address.Text=Current?.AtHome==true?"":Current?.Url??"";if(previous?.Web is {IsDisposed:false}&&previous!=Current)previous.Web.Visible=false;if(Current?.Web!=null){Current.Web.Visible=!Current.AtHome&&Current.InternalKey.Length==0;RestoreMemoryTarget(Current);}if(previous!=null&&previous!=Current)_=TrimHidden(previous);
+            var previous=lastSelected;if(previous!=null)previous.LastActive=DateTime.UtcNow;lastSelected=Current;if(Current!=null){Current.LastActive=DateTime.UtcNow;Current.Visits++;}horizontalTabs?.RevealSelection();address.Text=Current?.AtHome==true?"":Current?.Url??"";if(previous?.Web is {IsDisposed:false}&&previous!=Current)previous.Web.Visible=false;if(Current?.Web!=null){Current.Web.Visible=!Current.AtHome&&Current.InternalKey.Length==0;RestoreMemoryTarget(Current);}if(previous!=null&&previous!=Current)_=TrimHidden(previous);
             lastActivation = DateTime.UtcNow;
             if (Current != null) { state.ActiveWorkspace = Current.Workspace; if (!Current.AtHome && Current.InternalKey.Length==0 && Current.Web == null) _ = Navigate(Current.Url, Current); }
             Sync(); QueueSave();
@@ -94,19 +99,30 @@ public sealed partial class BrowserForm : Form
         Shown += async (_, _) =>
         {
             shownMs = Program.Startup.Elapsed.TotalMilliseconds;
-            environment = CreateEnvironment();
             if (smoke) { await SmokeTest(); return; }
-            var workspaceAtStart = state.ActiveWorkspace;
-            if (initialUrl==null && state.RestoreTabs && state.Sessions.Count > 0) {
-                foreach (var entry in state.Sessions.Where(x => IsWeb(x.Url)).ToArray()) {
-                    NewTab(entry.Url, false, entry.Workspace); pages[^1].Pinned = entry.Pinned; if(!string.IsNullOrWhiteSpace(entry.Title)) pages[^1].Title = entry.Title;
-                }
-            } else if(initialUrl==null && state.RestoreTabs) foreach (var url in state.Tabs.Where(IsWeb).ToArray()) NewTab(url, false);
-            state.ActiveWorkspace = workspaceAtStart; NewTab(initialUrl);
-            try { await environment; var warm = Current; if (!closing && warm != null && !warm.AtHome && warm.InternalKey.Length == 0 && warm.Web == null) await Ensure(warm); if (!closing) status.Text = "Engine ready · Ctrl+L to search · Shield controls ad blocking"; }
-            catch (Exception e) { EngineError(e); }
+            // Show the dashboard and accept input before rebuilding the saved tab strip.
+            NewTab(initialUrl);
+            if (initialUrl != null || !state.RestoreTabs) return;
+            BeginInvoke((Action)RestoreSavedTabs);
         };
         FormClosing += (_, _) => {memoryTimer.Stop();DismissPopups();if(mouseHook!=IntPtr.Zero){UnhookWindowsHookEx(mouseHook);mouseHook=IntPtr.Zero;}hints.Dispose();predictCancellation?.Cancel();suggestions?.Close();suggestTimer.Stop(); Save(); closing = true; saver.Stop(); foreach (var p in pages) p.Web?.Dispose(); };
+    }
+
+    private void RestoreSavedTabs()
+    {
+        if (closing) return;
+        tabs.SuspendLayout();
+        try
+        {
+            if (state.Sessions.Count > 0) {
+                foreach (var entry in state.Sessions.Where(x => IsWeb(x.Url)).ToArray()) {
+                    AddTab(entry.Url, entry.Workspace, entry.Pinned, entry.Title);
+                }
+            } else foreach (var url in state.Tabs.Where(IsWeb)) AddTab(url, state.ActiveWorkspace);
+        }
+        finally { tabs.ResumeLayout(); }
+        horizontalTabs?.RevealSelection();
+        Sync();
     }
     private Button Button(string label, string help, Action action)
     {
@@ -117,15 +133,36 @@ public sealed partial class BrowserForm : Form
     private void NewTab(string? url = null, bool select = true, string? workspace = null)
     {
         suggestions?.Hide();
-        
-        var p = new BrowserTab { Workspace = workspace ?? state.ActiveWorkspace };
-        p.Container = new Panel { BackColor = bg, Tag = p };
-        p.Home = CreateDashboard(p);
-        p.Container.Controls.Add(p.Home); pages.Add(p); tabs.TabPages.Add(p.Container);
-        if (select) tabs.SelectedTab = p.Container;
-        if (url != null) { p.Favicon=LoadCachedFavicon(url); p.Url = url; p.Title = Policy.Host(url); p.Container.Text = p.Title; p.AtHome = false; if (select) _ = Navigate(url, p); }
 
-        Sync(); QueueSave();if(select&&url==null){address.Text="";address.Focus();}
+        var previous = Current;
+        var p = AddTab(url, workspace ?? state.ActiveWorkspace);
+        if (select && previous != null) tabs.SelectedTab = p.Container;
+        if (!select) Sync();
+        QueueSave();
+        if (select && url == null) { address.Text = ""; address.Focus(); }
+    }
+
+    private BrowserTab AddTab(string? url, string workspace, bool pinned = false, string? title = null)
+    {
+        var p = new BrowserTab { Workspace = workspace, Pinned = pinned };
+        p.BuildHome = () =>
+        {
+            var dashboard = CreateDashboard(p);
+            p.Container.Controls.Add(dashboard);
+            return dashboard;
+        };
+        p.Container = new Panel { BackColor = bg, Tag = p };
+        if (url != null)
+        {
+            p.Url = url;
+            p.Title = string.IsNullOrWhiteSpace(title) ? Policy.Host(url) : title;
+            p.AtHome = false;
+        }
+        p.Container.Text = p.Title;
+        if (p.AtHome) _ = p.Home;
+        pages.Add(p);
+        tabs.TabPages.Add(p.Container);
+        return p;
     }
     private void ReorderTab(BrowserTab moving,BrowserTab target)
     {
@@ -161,12 +198,16 @@ public sealed partial class BrowserForm : Form
         p.Web = web; p.Sleeping = false;p.FilterSignature="";p.ArticleStyleRequested=false;p.MemoryReason="Live page"; p.Container.Controls.Add(web);
         try
         {
-            environment ??= CreateEnvironment();
-            await web.EnsureCoreWebView2Async(await environment);
+            if (environment == null || environment.IsFaulted || environment.IsCanceled)
+                environment = CreateEnvironment();
+            var engine = await environment;
+            if (closing || web.IsDisposed) return;
+            await web.EnsureCoreWebView2Async(engine);
             if (closing || web.IsDisposed) return;
             var core = web.CoreWebView2;
             if(smoke&&Directory.Exists(Path.Combine(profilePath,"MemoryFixture")))for(int i=0;i<8;i++)core.SetVirtualHostNameToFolderMapping("aether-memory-"+i+".test",Path.Combine(profilePath,"MemoryFixture"),CoreWebView2HostResourceAccessKind.DenyCors);
             await LoadExtensionCatalog(core);
+            if (closing || web.IsDisposed) return;
             if (smoke && Directory.Exists(Path.Combine(profilePath, "Fixtures"))) core.SetVirtualHostNameToFolderMapping("aether.test", Path.Combine(profilePath, "Fixtures"), CoreWebView2HostResourceAccessKind.DenyCors);
             web.KeyDown += (_, e) => {
                 var key = e.KeyData;
@@ -185,6 +226,7 @@ public sealed partial class BrowserForm : Form
                 var extensionPage = IsAllowedExtensionPage(p,e.Uri);
                 if (!extensionPage && !IsWeb(e.Uri)) { e.Cancel = true; status.Text = "Only HTTPS web pages are supported"; return; }
                 if (e.Uri.StartsWith("http://", StringComparison.OrdinalIgnoreCase) && !(smoke&&requestFixtureOrigin.Length>0&&e.Uri.StartsWith(requestFixtureOrigin+"/",StringComparison.Ordinal))) { e.Cancel = true; _ = Navigate(e.Uri, p); return; }
+                p.ActiveNavigationId = e.NavigationId;
                 p.Url = e.Uri; p.AtHome = false; p.Blocked = 0; p.Observed = 0; p.Finished = 0; p.LastError = ""; p.Loading = true; p.Clock.Restart();
                 navigationDiagnostics.Start(p.Url);
                 ApplyPolicy(p); Sync();
@@ -203,7 +245,7 @@ public sealed partial class BrowserForm : Form
                     e.Response = core.Environment.CreateWebResourceResponse(null, 204, "No Content", "Cache-Control: no-store\r\n");
                 }
             };
-            core.FaviconChanged += async (_, _) => { try { using var stream = await core.GetFaviconAsync(CoreWebView2FaviconImageFormat.Png); using var decoded = Image.FromStream(stream); var icon = new Bitmap(decoded,16,16); if(closing || !pages.Contains(p)){icon.Dispose();return;} p.Favicon?.Dispose();p.Favicon=icon;CacheFavicon(p.Url,icon);RefreshSurfaces(); } catch { } };
+            core.FaviconChanged += async (_, _) => { try { using var stream = await core.GetFaviconAsync(CoreWebView2FaviconImageFormat.Png); using var decoded = Image.FromStream(stream); var icon = new Bitmap(decoded,16,16); if(closing || !pages.Contains(p) || p.Web != web){icon.Dispose();return;} p.Favicon?.Dispose();p.Favicon=icon;CacheFavicon(p.Url,icon);RefreshSurfaces(); } catch { } };
             core.IsDocumentPlayingAudioChanged += (_,_) => {p.Audible=core.IsDocumentPlayingAudio;RefreshSurfaces();};
             core.DocumentTitleChanged += (_, _) => { p.Title = core.DocumentTitle; p.Container.Text = Short(p.Title); RefreshSurfaces(); if (p == Current) Text = p.Title + " — Aether One"; QueueSave(); };
             core.SourceChanged += (_, _) => { if (IsWeb(core.Source)) p.Url = core.Source; Sync(); };
@@ -211,6 +253,7 @@ public sealed partial class BrowserForm : Form
             core.DOMContentLoaded+=(_,_)=>_=ApplyArticleRendering(p);
             core.NavigationCompleted += (_, e) =>
             {
+                if (p.ActiveNavigationId != e.NavigationId) return;
                 p.Loading = false; p.Finished = p.Clock.ElapsedMilliseconds;
                 navigationDiagnostics.Complete(p.Url, e.IsSuccess, p.Finished);
                 if(e.IsSuccess){p.ReloadCostMs=p.ReloadCostMs==0?p.Finished:(p.ReloadCostMs*3+p.Finished)/4;_=RestoreCheckpoint(p);}
@@ -265,14 +308,20 @@ public sealed partial class BrowserForm : Form
         if(raw.StartsWith("aether://",StringComparison.OrdinalIgnoreCase)){OpenInternal(raw[9..],target);return;}
         var url = smoke&&requestFixtureOrigin.Length>0&&raw.StartsWith(requestFixtureOrigin+"/",StringComparison.Ordinal)?raw:Policy.Resolve(raw,state.SearchEngine); if (url == null) { status.Text = "Enter an HTTPS address or search phrase"; return; }
         var p = target ?? Current; if (p == null) { NewTab(); p = Current!; }
+        int intent = ++p.NavigationIntent;
         try
         {
-            p.InternalKey="";p.NativePage?.Dispose();p.NativePage=null;p.Url = url; await Ensure(p); if (closing || !pages.Contains(p) || p.Web?.CoreWebView2 == null) return;
-            var web = p.Web;p.Title=web.CoreWebView2.DocumentTitle; ApplyPolicy(p); p.AtHome = false; p.Home.Visible = false; web.Visible = p==Current;if(p==Current){web.BringToFront();web.Focus();}
+            await Ensure(p);
+            if (closing || !pages.Contains(p) || intent != p.NavigationIntent || p.Web?.CoreWebView2 == null) return;
+            p.InternalKey = "";
+            p.NativePage?.Dispose();
+            p.NativePage = null;
+            p.Url = url;
+            var web = p.Web;p.Title=web.CoreWebView2.DocumentTitle; ApplyPolicy(p); p.AtHome = false; p.HideHome(); web.Visible = p==Current;if(p==Current){web.BringToFront();web.Focus();}
             if (web.Source?.AbsoluteUri == url && !p.Loading && p.Finished > 0) { Sync(); status.Text = "Live page reused · no navigation request"; return; }
             p.Loading = true; web.CoreWebView2.Navigate(url); if(p==Current)web.Focus(); Sync(); QueueSave();
         }
-        catch (Exception e) { if (!closing && pages.Contains(p)) EngineError(e); }
+        catch (Exception e) { if (!closing && p == Current && intent == p.NavigationIntent) EngineError(e); }
     }
     private void EngineError(Exception e)
     {
@@ -283,12 +332,14 @@ public sealed partial class BrowserForm : Form
     private void Home()
     {
         var p = Current; if (p == null) return;
+        p.NavigationIntent++;
+        p.ActiveNavigationId = null;
         p.Web?.CoreWebView2?.Stop(); p.Loading = false; p.AtHome = true;p.InternalKey="";p.NativePage?.Dispose();p.NativePage=null; if (p.Web != null) p.Web.Visible = false; p.Home.Visible = true; p.Home.BringToFront(); p.Container.Text = "New tab"; Sync(); QueueSave();
     }
     private void Reload()
     {
         var p = Current;if(p==null)return;if(p.InternalKey.Length>0){OpenInternal(p.InternalKey,p);return;}if(p.AtHome){p.Home.Invalidate(true);return;}if(p.Web?.CoreWebView2==null){_=Navigate(p.Url,p);return;}
-        if (p.Loading) { p.Web.CoreWebView2.Stop(); p.Loading = false; Sync(); } else { ApplyPolicy(p); p.Loading = true; p.Web.Reload(); }
+        if (p.Loading) { p.ActiveNavigationId = null; p.Web.CoreWebView2.Stop(); p.Loading = false; Sync(); } else { ApplyPolicy(p); p.Loading = true; p.Web.Reload(); }
     }
     private void CloseTab(BrowserTab? p)
     {

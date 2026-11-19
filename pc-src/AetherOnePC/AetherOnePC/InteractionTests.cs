@@ -14,7 +14,16 @@ public sealed partial class BrowserForm
         OpenInternal("settings/appearance");var appearance=Current!;var toggle=Descendants(appearance.NativePage!).OfType<ToggleSwitch>().First();bool old=state.ShowFavorites;toggle.TestToggle();if(state.ShowFavorites==old||favorites!.Visible==old)throw new Exception("Bookmarks visibility switch did not work");toggle.TestToggle();var theme=Descendants(appearance.NativePage!).OfType<ComboBox>().First();theme.SelectedItem="Light";if(state.DarkTheme)throw new Exception("Theme selection failed");Descendants(appearance.NativePage!).OfType<ComboBox>().First().SelectedItem="Dark";CloseTab(appearance);SelectPage(original);
         var made=new List<BrowserTab>();foreach(var title in new[]{"A","B","C","D"}){NewTab();Current!.Title=title;made.Add(Current);}
         SelectPage(made[1]);horizontalTabs!.Refresh();var r=horizontalTabs.hits.First(x=>x.Page==made[1]).Rect;horizontalTabs.TestClick(new Point(r.Right-4,r.Top+1));if(!pages.Contains(made[1]))throw new Exception("Tab closed outside close control");horizontalTabs.Refresh();r=horizontalTabs.hits.First(x=>x.Page==made[1]).Rect;horizontalTabs.TestClick(new Point(r.Right-15,22));if(pages.Contains(made[1])||Current!=made[2])throw new Exception("Close did not prefer the right-hand neighbor");CloseRight(made[2]);if(pages.Contains(made[3])||!pages.Contains(made[0]))throw new Exception("Close tabs right removed wrong tabs");CloseOthers(original);if(pages.Any(x=>x!=original&&!x.Pinned))throw new Exception("Close other tabs failed");SelectPage(original);
-        var extra=new List<BrowserTab>();for(int i=0;i<27;i++){NewTab(null,false);extra.Add(pages[^1]);}if(extra.Count!=27||extra.Any(x=>!pages.Contains(x)))throw new Exception("Browser still has a tab-count limit");var moving=extra[^1];ReorderTab(moving,extra[0]);if(pages.IndexOf(moving)>=pages.IndexOf(extra[0]))throw new Exception("Tab drag reorder failed");CloseOthers(original);SelectPage(original);
+        var extra=new List<BrowserTab>();for(int i=0;i<27;i++){NewTab(null,false);extra.Add(pages[^1]);}if(extra.Count!=27||extra.Any(x=>!pages.Contains(x)))throw new Exception("Browser still has a tab-count limit");horizontalTabs.Refresh();
+        horizontalTabs.TestWheel(-240);
+        horizontalTabs.Refresh();
+        if (horizontalTabs.hits.Any(x => x.Page == original) || Current != original)
+            throw new Exception("Scrolling overflow did not preserve selection and move the viewport");
+        SelectPage(original);
+        horizontalTabs.Refresh();
+        if (!horizontalTabs.hits.Any(x => x.Page == original))
+            throw new Exception("Explicit tab selection did not reveal the tab");
+        var moving=extra[^1];ReorderTab(moving,extra[0]);if(pages.IndexOf(moving)>=pages.IndexOf(extra[0]))throw new Exception("Tab drag reorder failed");CloseOthers(original);SelectPage(original);
         File.WriteAllText(Path.Combine(output,"interaction-tests.txt"),"PASS: bookmark icon and confirmation popup, rename, actual bookmark Open button, outside click on WebView2 dismisses menu, tab edge outside close target cannot close, right-neighbor activation, close-right and close-other actions, more than 24 tabs, reorder position.\n");
     }
 }

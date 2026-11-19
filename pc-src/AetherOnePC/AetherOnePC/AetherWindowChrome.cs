@@ -19,19 +19,19 @@ internal static class AetherWindowChrome
     private static extern int DwmSetWindowAttribute(
         IntPtr hwnd, int attribute, ref int value, int size);
 
-    internal static void Apply(IntPtr handle)
+    internal static void Apply(IntPtr handle, bool dark)
     {
         if (!OperatingSystem.IsWindows() || handle == IntPtr.Zero) return;
         try
         {
-            int on = 1;
+            int on = dark ? 1 : 0;
             int size = sizeof(int);
             if (DwmSetWindowAttribute(handle, DwmwaUseImmersiveDarkMode, ref on, size) != 0)
                 DwmSetWindowAttribute(handle, DwmwaUseImmersiveDarkModeLegacy, ref on, size);
 
             // DWM COLORREF: 0x00BBGGRR, dark neutral matching the tab strip.
-            int caption = 0x00202020;
-            int foreground = 0x00F2F2F2;
+            int caption = dark ? 0x00202020 : 0x00F2F2F2;
+            int foreground = dark ? 0x00F2F2F2 : 0x00202020;
             DwmSetWindowAttribute(handle, DwmwaCaptionColor, ref caption, size);
             DwmSetWindowAttribute(handle, DwmwaTextColor, ref foreground, size);
             int rounded = 2;

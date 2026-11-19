@@ -15,6 +15,8 @@ public sealed partial class BrowserForm
         suggestions?.Hide();suggestTimer.Stop();predictCancellation?.Cancel();
         key=key.Trim('/').ToLowerInvariant();if(key.Length==0)key="settings";if(target==null){target=pages.FirstOrDefault(p=>p.InternalKey==key);if(target==null){NewTab();target=Current!;}else SelectPage(target);}
         if(Current!=target)SelectPage(target);
+        target.NavigationIntent++;
+        target.ActiveNavigationId = null;
         target.InternalKey=key;target.Url="aether://"+key;target.AtHome=false;target.Loading=false;target.Title=key.StartsWith("settings")?"Settings":char.ToUpper(key[0])+key[1..];target.Home.Visible=false;if(key!="extensions")ReleaseView(target);else if(target.Web!=null)target.Web.Visible=false;
         target.NativePage?.Dispose();var frame=new Panel{Dock=DockStyle.Fill,BackColor=Visual.Base,Padding=new Padding(0)};target.NativePage=frame;target.Container.Controls.Add(frame);frame.BringToFront();BuildNativePage(frame,target,key);Sync();address.Text=target.Url;suggestions?.Hide();suggestTimer.Stop();QueueSave();
     }
@@ -89,7 +91,7 @@ public sealed partial class BrowserForm
     private bool refreshingExtensions;
     private async Task RefreshExtensionsPage(BrowserTab p){if(refreshingExtensions||p.Web?.CoreWebView2!=null)return;refreshingExtensions=true;try{await Ensure(p);if(p.InternalKey=="extensions")OpenInternal("extensions",p);}catch(Exception e){extensionMessage=e.Message;}finally{refreshingExtensions=false;}}
     private async Task ClearSiteData(BrowserTab p){if(MessageBox.Show(this,"Clear cookies and cache for this profile? Websites may sign you out.","Clear browsing data",MessageBoxButtons.OKCancel)!=DialogResult.OK)return;try{await Ensure(p);await p.Web!.CoreWebView2.Profile.ClearBrowsingDataAsync(CoreWebView2BrowsingDataKinds.Cookies|CoreWebView2BrowsingDataKinds.DiskCache);extensionMessage="Cookies and cache cleared.";}catch(Exception e){MessageBox.Show(this,e.Message);}}
-    private void ApplyAppearance(){Visual.SetTheme(state.DarkTheme);bg=Visual.Base;panel=Visual.Surface;ink=Visual.Text;mint=Visual.Mint;void Paint(Control c){if(c is Microsoft.Web.WebView2.WinForms.WebView2)return;c.BackColor=c==address||c==address.Parent?Visual.Card:Visual.Surface;c.ForeColor=Visual.Text;foreach(Control child in c.Controls)Paint(child);c.Invalidate();}Paint(this);address.BackColor=Visual.Card;horizontalTabs?.Invalidate();favorites?.Invalidate();foreach(var p in pages)if(p.InternalKey.Length>0&&p!=Current)p.NativePage?.Invalidate();}
+    private void ApplyAppearance(){AetherWindowChrome.Apply(Handle,state.DarkTheme);Visual.SetTheme(state.DarkTheme);bg=Visual.Base;panel=Visual.Surface;ink=Visual.Text;mint=Visual.Mint;void Paint(Control c){if(c is Microsoft.Web.WebView2.WinForms.WebView2)return;c.BackColor=c==address||c==address.Parent?Visual.Card:Visual.Surface;c.ForeColor=Visual.Text;foreach(Control child in c.Controls)Paint(child);c.Invalidate();}Paint(this);address.BackColor=Visual.Card;horizontalTabs?.Invalidate();favorites?.Invalidate();foreach(var p in pages)if(p.InternalKey.Length>0&&p!=Current)p.NativePage?.Invalidate();}
     private sealed record DownloadEntry(string Path,CoreWebView2DownloadOperation Operation);
     private readonly List<DownloadEntry> downloadEntries=[];
     private string DownloadDirectory()=>state.DownloadFolder.Length>0?state.DownloadFolder:Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),"Downloads");

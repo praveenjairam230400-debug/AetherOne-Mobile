@@ -98,9 +98,6 @@ internal sealed class TabDeck : Panel
 }
 public sealed partial class BrowserForm
 {
-    [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
-    private static extern int DwmSetWindowAttribute(IntPtr hwnd,int attribute,ref int value,int size);
-    protected override void OnHandleCreated(EventArgs e){base.OnHandleCreated(e);if(OperatingSystem.IsWindowsVersionAtLeast(10,0,17763)){int dark=1;DwmSetWindowAttribute(Handle,20,ref dark,sizeof(int));}}
     private TableLayoutPanel shell=null!;
     private Panel pageHost=null!;
     private bool refreshing;
@@ -108,8 +105,8 @@ public sealed partial class BrowserForm
     private void BuildWorkspaceUi()=>BuildBrowserChrome();
     private Panel CreateDashboard(BrowserTab owner){var p=new Panel{Dock=DockStyle.Fill,BackColor=Visual.Base};p.Controls.Add(new StartPage(this,owner){Dock=DockStyle.Fill});return p;}
     private void RefreshSurfaces(){if(horizontalTabs==null||refreshing||closing)return;refreshing=true;horizontalTabs.Invalidate();favorites?.Invalidate();RefreshExtensionPins();if(Current?.AtHome==true)foreach(Control c in Current.Home.Controls)c.Invalidate();if(reload is ChromeButton b)b.Glyph=Current?.Loading==true?"close":"reload";refreshing=false;}
-    private void SelectPage(BrowserTab p){tabs.SelectedTab=p.Container;Sync();QueueSave();}
-    private void TabMenu(BrowserTab p){var m=BrowserContextMenu();m.Items.Add(p.Pinned?"Unpin tab":"Pin tab",null,(_,_)=>{p.Pinned=!p.Pinned;RefreshSurfaces();QueueSave();});m.Items.Add("Reload",null,(_,_)=>{SelectPage(p);Reload();});m.Items.Add("Duplicate",null,(_,_)=>NewTab(p.Url));m.Items.Add("Close tab",null,(_,_)=>CloseTab(p));m.Items.Add("Close tabs to the right",null,(_,_)=>CloseRight(p));m.Items.Add("Close other tabs",null,(_,_)=>CloseOthers(p));m.Items.Add("Reopen closed tab",null,(_,_)=>ReopenClosed());m.Show(Cursor.Position);}
+    private void SelectPage(BrowserTab p){tabs.SelectedTab=p.Container;horizontalTabs?.RevealSelection();Sync();QueueSave();}
+    private void TabMenu(BrowserTab p){var m=BrowserContextMenu();m.Items.Add(p.Pinned?"Unpin tab":"Pin tab",null,(_,_)=>{p.Pinned=!p.Pinned;horizontalTabs?.RevealSelection();RefreshSurfaces();QueueSave();});m.Items.Add("Reload",null,(_,_)=>{SelectPage(p);Reload();});m.Items.Add("Duplicate",null,(_,_)=>NewTab(p.Url));m.Items.Add("Close tab",null,(_,_)=>CloseTab(p));m.Items.Add("Close tabs to the right",null,(_,_)=>CloseRight(p));m.Items.Add("Close other tabs",null,(_,_)=>CloseOthers(p));m.Items.Add("Reopen closed tab",null,(_,_)=>ReopenClosed());m.Show(Cursor.Position);}
     private void ReopenClosed(){if(closedTabs.TryPop(out var x)){NewTab(x.Url);Current!.Pinned=x.Pinned;RefreshSurfaces();}}
     private void SleepInactive(bool confirm=true){var targets=pages.Where(p=>p!=Current&&!p.Pinned&&!p.Audible&&!p.Loading&&p.Web!=null&&p.InternalKey.Length==0).ToArray();if(targets.Length==0)return;if(confirm&&MessageBox.Show(this,$"Release {targets.Length} inactive page views? Tabs reload when selected. Unsaved forms and scroll positions can be lost.","Sleep inactive tabs",MessageBoxButtons.OKCancel)!=DialogResult.OK)return;foreach(var p in targets){ReleaseView(p);}RefreshSurfaces();}
     private async Task RunBenchmark(string output,BrowserTab page)
