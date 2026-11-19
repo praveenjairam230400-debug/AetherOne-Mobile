@@ -100,7 +100,7 @@ public sealed partial class BrowserForm : Form
                 }
             } else if(initialUrl==null && state.RestoreTabs) foreach (var url in state.Tabs.Where(IsWeb).ToArray()) NewTab(url, false);
             state.ActiveWorkspace = workspaceAtStart; NewTab(initialUrl);
-            try { await environment; var warm = Current; if (!closing && warm != null) await Ensure(warm); if (!closing) status.Text = "Engine ready · Ctrl+L to search · Shield controls ad blocking"; }
+            try { await environment; var warm = Current; if (!closing && warm != null && !warm.AtHome && warm.InternalKey.Length == 0 && warm.Web == null) await Ensure(warm); if (!closing) status.Text = "Engine ready · Ctrl+L to search · Shield controls ad blocking"; }
             catch (Exception e) { EngineError(e); }
         };
         FormClosing += (_, _) => {memoryTimer.Stop();DismissPopups();if(mouseHook!=IntPtr.Zero){UnhookWindowsHookEx(mouseHook);mouseHook=IntPtr.Zero;}hints.Dispose();predictCancellation?.Cancel();suggestions?.Close();suggestTimer.Stop(); Save(); closing = true; saver.Stop(); foreach (var p in pages) p.Web?.Dispose(); };
