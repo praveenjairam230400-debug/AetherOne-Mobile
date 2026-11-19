@@ -1,0 +1,28 @@
+name: Aether Windows Release Candidate
+on:
+  push:
+    branches: [aether-rebuild-performance-ui]
+  workflow_dispatch:
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Restore
+        run: dotnet restore pc-src/AetherOnePC/AetherOnePC/AetherOnePC.csproj
+      - name: Compile
+        run: dotnet build pc-src/AetherOnePC/AetherOnePC/AetherOnePC.csproj -c Release --no-restore
+      - name: Publish Windows x64
+        run: dotnet publish pc-src/AetherOnePC/AetherOnePC/AetherOnePC.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o publish
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path publish/* -DestinationPath AetherOne-Windows-x64.zip -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AetherOne-Windows-x64
+          path: AetherOne-Windows-x64.zip
+          if-no-files-found: error
